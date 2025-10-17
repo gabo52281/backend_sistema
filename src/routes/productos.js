@@ -1,0 +1,98 @@
+const express = require("express");
+const pool = require("../config/db");
+const authMiddleware = require("../middleware/authMiddleware");
+
+const router = express.Router();
+
+/**
+ * 🟢 Crear producto (solo admin)
+ */
+router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
+  const { nombre, precio, stock } = req.body;
+  const id_admin = req.user.id_admin; // viene del token JWT
+
+  if (!nombre || !precio) {
+    return res.status(400).json({ error: "El nombre y el precio son obligatorios" });
+  }
+
+  try {
+    await pool.query(
+      "INSERT INTO productos (nombre, precio, stock, id_admin) VALUES ($1, $2, $3, $4)",
+      [nombre, precio, stock || 0, id_admin]
+    );
+
+    res.status(201).json({ mensaje: "Producto creado correctamente" });
+  } catch (error) {
+    console.error("❌ Error al crear producto:", error);
+    res.status(500).json({ error: "Error al crear producto" });
+  }
+});
+
+/**
+ * 🔹 Listar productos (admin, cajero o vendedor)
+ */
+router.get("/", authMiddleware(["admin", "cajero", "vendedor"]), async (req, res) => {
+  const id_admin = req.user.id_admin;
+
+  try {
+    const result = await pool.query(
+      "SELECT * FROM productos WHERE id_admin = $1 ORDER BY id_producto DESC",
+      [id_admin]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("❌ Error al listar productos:", error);
+    res.status(500).json({ error: "Error al listar productos" });
+  }
+});
+
+/**
+ * ✏️ Editar producto (solo admin)
+ */
+router.put("/:id", authMiddleware(["admin"]), async (req, res) => {
+  const { id } = req.params;
+  const { nombre, precio, stock } = req.body;
+  const id_admin = req.user.id_admin;
+
+  try {
+    const result = await pool.query(
+      "UPDATE productos SET nombre = $1, precio = $2, stock = $3 WHERE id_producto = $4 AND id_admin = $5",
+      [nombre, precio, stock, id, id_admin]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Producto no encontrado o no pertenece a este negocio" });
+    }
+
+    res.json({ mensaje: "Producto actualizado correctamente" });
+  } catch (error) {
+    console.error("❌ Error al actualizar producto:", error);
+    res.status(500).json({ error: "Error al actualizar producto" });
+  }
+});
+
+/**
+ * 🗑️ Eliminar producto (solo admin)
+ */
+router.delete("/:id", authMiddleware(["admin"]), async (req, res) => {
+  const { id } = req.params;
+  const id_admin = req.user.id_admin;
+
+  try {
+    const result = await pool.query(
+      "DELETE FROM productos WHERE id_producto = $1 AND id_admin = $2",
+      [id, id_admin]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Producto no encontrado o no pertenece a este negocio" });
+    }
+
+    res.json({ mensaje: "Producto eliminado correctamente" });
+  } catch (error) {
+    console.error("❌ Error al eliminar producto:", error);
+    res.status(500).json({ error: "Error al eliminar producto" });
+  }
+});
+
+module.exports = router;

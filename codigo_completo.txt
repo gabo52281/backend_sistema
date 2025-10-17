@@ -1,0 +1,757 @@
+
+
+// ===== copiar.js =====
+
+const fs = require("fs");
+const path = require("path");
+
+const directorio = "."; // raíz del proyecto
+const extensiones = [".js", ".env"]; // tipos de archivo a incluir
+const salida = "codigo_completo.txt";
+
+function listarArchivos(dir) {
+  const archivos = fs.readdirSync(dir);
+  let contenido = "";
+
+  for (const archivo of archivos) {
+    const ruta = path.join(dir, archivo);
+    const stat = fs.statSync(ruta);
+
+    if (stat.isDirectory() && archivo !== "node_modules") {
+      contenido += listarArchivos(ruta); // recursivo
+    } else if (extensiones.includes(path.extname(archivo))) {
+      contenido += `\n\n// ===== ${ruta} =====\n\n`;
+      contenido += fs.readFileSync(ruta, "utf-8");
+    }
+  }
+  return contenido;
+}
+
+fs.writeFileSync(salida, listarArchivos(directorio));
+console.log("✅ Código exportado a", salida);
+
+
+// ===== generar_hash.js =====
+
+const bcrypt = require("bcrypt");
+
+const password = "123456"; // puedes cambiarla si quieres
+
+bcrypt.hash(password, 10, (err, hash) => {
+  if (err) {
+    console.error("❌ Error al generar el hash:", err);
+  } else {
+    console.log("✅ Hash generado para la contraseña:", password);
+    console.log(hash);
+  }
+});
+
+
+// ===== src\app.js =====
+
+const express = require("express");
+const cors = require("cors");
+require("dotenv").config();
+
+// Importar rutas
+const authRoutes = require("./routes/auth");
+const usersRoutes = require("./routes/users");
+const adminRoutes = require("./routes/admins");
+const productosRoutes = require("./routes/productos");
+const facturasRoutes = require("./routes/facturas");
+const clientesRoutes = require("./routes/clientes");
+
+
+const app = express();
+
+// Middlewares
+app.use(cors());
+app.use(express.json());
+
+// Rutas
+app.use("/api/auth", authRoutes);
+app.use("/api/users", usersRoutes);
+app.use("/api/admins", adminRoutes);
+app.use("/api/productos", productosRoutes);
+app.use("/api/facturas", facturasRoutes);
+app.use("/api/clientes", clientesRoutes);
+
+
+// Servidor
+app.listen(4000, () => {
+  console.log("Servidor corriendo en http://localhost:4000");
+});
+
+
+// ===== src\config\db.js =====
+
+const { Pool } = require("pg");
+require("dotenv").config();
+
+const pool = new Pool({
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASS,
+  port: process.env.DB_PORT,
+});
+
+
+// ✅ Probar conexión apenas inicie el servidor
+pool.query("SELECT current_database(), NOW()", (err, res) => {
+  if (err) {
+    console.error("❌ Error conectando a la base de datos:", err.message);
+  } else {
+    console.log("✅ Conectado correctamente a la base de datos:", res.rows[0].current_database);
+    console.log("🕒 Hora del servidor:", res.rows[0].now);
+  }
+});
+
+console.log("📡 Conectado a:", process.env.DB_NAME);
+
+module.exports = pool;
+
+
+// ===== src\middleware\authMiddleware.js =====
+
+const jwt = require("jsonwebtoken");
+
+function authMiddleware(roles = []) {
+  return (req, res, next) => {
+    const token = req.headers["authorization"]?.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "Token requerido" });
+
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      
+      if (roles.length && !roles.includes(decoded.rol)) {
+        return res.status(403).json({ error: "No autorizado" });
+      }
+     
+      // if (roles.length && !roles.includes(decoded.rol)) {
+      //   // ⚠️ Excepción temporal para pruebas: permitir al superadmin
+      //   if (decoded.rol !== "superadmin") {
+      //     return res.status(403).json({ error: "No autorizado" });
+      //   }
+      // }
+
+      req.user = decoded;
+      next();
+    } catch (err) {
+      return res.status(403).json({ error: "Token inválido" });
+    }
+  };
+}
+
+module.exports = authMiddleware;
+
+
+// ===== src\routes\admins.js =====
+
+const express = require("express");
+const bcrypt = require("bcrypt");
+const pool = require("../config/db");
+const authMiddleware = require("../middleware/authMiddleware");
+
+const router = express.Router();
+
+/**
+ * 🟣 Ruta: Crear nuevo negocio y su administrador
+ * Solo el superadmin puede usarla.
+ * - Crea primero el registro en "administradores"
+ * - Luego crea el usuario "admin" vinculado a ese negocio
+ */
+router.post("/crear", authMiddleware(["superadmin"]), async (req, res) => {
+  const { nombre_negocio, email_contacto, nombre_admin, email_admin, password_admin } = req.body;
+
+  // Validar campos obligatorios
+  if (!nombre_negocio || !email_contacto || !nombre_admin || !email_admin || !password_admin) {
+    return res.status(400).json({ error: "Faltan datos obligatorios" });
+  }
+
+  try {
+    // 1️⃣ Verificar si el negocio ya existe
+    const negocioExistente = await pool.query(
+      "SELECT * FROM administradores WHERE email_contacto = $1",
+      [email_contacto]
+    );
+    if (negocioExistente.rows.length > 0) {
+      return res.status(409).json({ error: "Ya existe un negocio con ese email de contacto" });
+    }
+
+    // 2️⃣ Crear el nuevo negocio
+    const nuevoNegocio = await pool.query(
+      "INSERT INTO administradores (nombre_negocio, email_contacto) VALUES ($1, $2) RETURNING id_admin",
+      [nombre_negocio, email_contacto]
+    );
+    const id_admin = nuevoNegocio.rows[0].id_admin;
+
+    // 3️⃣ Verificar si el email del admin ya existe
+    const adminExistente = await pool.query(
+      "SELECT * FROM usuarios WHERE email = $1",
+      [email_admin]
+    );
+    if (adminExistente.rows.length > 0) {
+      return res.status(409).json({ error: "El email del administrador ya está en uso" });
+    }
+
+    // 4️⃣ Crear hash seguro de la contraseña
+    const password_hash = await bcrypt.hash(password_admin, 10);
+
+    // 5️⃣ Insertar el usuario administrador vinculado al negocio
+    await pool.query(
+      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin) VALUES ($1, $2, $3, $4, $5)",
+      [nombre_admin, email_admin, password_hash, "admin", id_admin]
+    );
+
+    res.status(201).json({
+      mensaje: "Negocio y administrador creados correctamente",
+      negocio: {
+        id_admin,
+        nombre_negocio,
+        email_contacto,
+      },
+      administrador: {
+        nombre: nombre_admin,
+        email: email_admin,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Error al crear negocio y administrador:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+module.exports = router;
+
+
+// ===== src\routes\auth.js =====
+
+/* 
+  tenemos expres para manejar las rutas
+  bcrypt para hashear las contraseñas
+  jsonwebtoken para crear tokens JWT y validar los usuarios
+  pool para conectarnos a la base de datos
+*/
+const express = require("express");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const pool = require("../config/db");
+
+// creamos el router de express
+const router = express.Router();
+
+
+// ruta para login
+router.post("/login", async (req, res) => {
+  // extraemos email y password del body
+  const { email, password } = req.body;
+
+  try {
+
+    // buscamos el usuario en la base de datos
+    // si no existe, retornamos un error
+    const result = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
+    if (result.rows.length === 0) return res.status(404).json({ error: "Usuario no encontrado" });
+    
+    // si existe, comparamos la contraseña hasheada
+    // si no coincide, retornamos un error
+    const user = result.rows[0];
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) return res.status(401).json({ error: "Credenciales inválidas" });
+
+    // si todo es correcto, creamos un token JWT
+    // y lo enviamos en la respuesta
+    // el token expira en 7 días
+    // incluimos id_usuario, rol e id_admin en el payload del token
+    // para usarlos en la autenticación y autorización
+    const token = jwt.sign(
+      { id_usuario: user.id_usuario, rol: user.rol, id_admin: user.id_admin },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    // enviamos el token y el rol en la respuesta
+    res.json({
+      token,
+      rol: user.rol,
+      id_usuario: user.id_usuario,
+      id_admin: user.id_admin,
+      nombre: user.nombre
+    });
+    
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error en login" });
+  }
+});
+
+
+
+
+
+// exportamos el router
+module.exports = router;
+
+
+// ===== src\routes\clientes.js =====
+
+const express = require("express");
+const pool = require("../config/db");
+const authMiddleware = require("../middleware/authMiddleware");
+
+const router = express.Router();
+
+/**
+ * 🟢 Crear cliente
+ * Solo pueden hacerlo admin o cajeros
+ */
+router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
+  const { nombre, telefono, direccion } = req.body;
+  const { id_admin } = req.user;
+
+  if (!nombre) {
+    return res.status(400).json({ error: "El nombre del cliente es obligatorio" });
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO clientes (nombre, telefono, direccion, id_admin)
+       VALUES ($1, $2, $3, $4)`,
+      [nombre, telefono || null, direccion || null, id_admin]
+    );
+
+    res.status(201).json({ mensaje: "Cliente registrado correctamente" });
+  } catch (error) {
+    console.error("❌ Error al registrar cliente:", error);
+    res.status(500).json({ error: "Error al registrar cliente" });
+  }
+});
+
+/**
+ * 📋 Listar clientes del negocio
+ */
+router.get("/", authMiddleware(["admin", "cajero"]), async (req, res) => {
+  const { id_admin } = req.user;
+
+  try {
+    const result = await pool.query(
+      "SELECT * FROM clientes WHERE id_admin = $1 ORDER BY creado_en DESC",
+      [id_admin]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("❌ Error al listar clientes:", error);
+    res.status(500).json({ error: "Error al listar clientes" });
+  }
+});
+
+/**
+ * ✏️ Editar cliente
+ * Solo el admin del negocio puede hacerlo
+ */
+router.put("/:id_cliente", authMiddleware(["admin"]), async (req, res) => {
+  const { id_cliente } = req.params;
+  const { nombre, telefono, direccion } = req.body;
+  const { id_admin } = req.user;
+
+  try {
+    const result = await pool.query(
+      `UPDATE clientes 
+       SET nombre = $1, telefono = $2, direccion = $3
+       WHERE id_cliente = $4 AND id_admin = $5`,
+      [nombre, telefono, direccion, id_cliente, id_admin]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Cliente no encontrado o no pertenece a este negocio" });
+    }
+
+    res.json({ mensaje: "Cliente actualizado correctamente" });
+  } catch (error) {
+    console.error("❌ Error al actualizar cliente:", error);
+    res.status(500).json({ error: "Error al actualizar cliente" });
+  }
+});
+
+/**
+ * 🗑️ Eliminar cliente
+ * Solo el admin puede hacerlo
+ */
+router.delete("/:id_cliente", authMiddleware(["admin"]), async (req, res) => {
+  const { id_cliente } = req.params;
+  const { id_admin } = req.user;
+
+  try {
+    const result = await pool.query(
+      "DELETE FROM clientes WHERE id_cliente = $1 AND id_admin = $2",
+      [id_cliente, id_admin]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Cliente no encontrado o no pertenece a este negocio" });
+    }
+
+    res.json({ mensaje: "Cliente eliminado correctamente" });
+  } catch (error) {
+    console.error("❌ Error al eliminar cliente:", error);
+    res.status(500).json({ error: "Error al eliminar cliente" });
+  }
+});
+
+module.exports = router;
+
+
+// ===== src\routes\facturas.js =====
+
+const express = require("express");
+const pool = require("../config/db");
+const authMiddleware = require("../middleware/authMiddleware");
+
+const router = express.Router();
+
+/**
+ * 💰 Crear una nueva factura (venta)
+ * Solo pueden hacerlo los admin o cajeros
+ */
+router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
+  const { productos, id_cliente } = req.body; // productos: [{ id_producto, cantidad }]
+  const { id_usuario, id_admin } = req.user;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    let total = 0;
+
+    // 🔹 Validar y actualizar stock de cada producto
+    for (const item of productos) {
+      const { id_producto, cantidad } = item;
+
+      // Bloquea el producto durante la transacción
+      const prodRes = await client.query(
+        "SELECT precio, stock FROM productos WHERE id_producto = $1 AND id_admin = $2 FOR UPDATE",
+        [id_producto, id_admin]
+      );
+
+      if (prodRes.rows.length === 0) {
+        throw new Error(`Producto ${id_producto} no encontrado`);
+      }
+
+      const { precio, stock } = prodRes.rows[0];
+      if (stock < cantidad) {
+        throw new Error(`Stock insuficiente para el producto ${id_producto}`);
+      }
+
+      total += precio * cantidad;
+
+      // 🔸 Actualiza el stock
+      const upd = await client.query(
+        `UPDATE productos
+         SET stock = stock - $1
+         WHERE id_producto = $2
+           AND id_admin = $3
+           AND stock >= $1
+         RETURNING stock`,
+        [cantidad, id_producto, id_admin]
+      );
+
+      if (upd.rowCount === 0) {
+        throw new Error(`No se pudo actualizar el stock para el producto ${id_producto}`);
+      }
+    }
+
+    // 🔹 Crear la factura principal
+    const facturaResult = await client.query(
+      "INSERT INTO facturas (id_cliente, id_usuario, id_admin, total) VALUES ($1, $2, $3, $4) RETURNING id_factura",
+      [id_cliente || null, id_usuario, id_admin, total]
+    );
+    const id_factura = facturaResult.rows[0].id_factura;
+
+    // 🔹 Insertar los detalles de la factura
+    for (const item of productos) {
+      const { id_producto, cantidad } = item;
+      const precioRes = await client.query(
+        "SELECT precio FROM productos WHERE id_producto = $1 AND id_admin = $2",
+        [id_producto, id_admin]
+      );
+      const precio_unitario = precioRes.rows[0].precio;
+
+      await client.query(
+        "INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario) VALUES ($1, $2, $3, $4)",
+        [id_factura, id_producto, cantidad, precio_unitario]
+      );
+    }
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      mensaje: "Factura registrada correctamente",
+      id_factura,
+      total,
+    });
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (e) {
+      console.error("Error durante el ROLLBACK:", e);
+    }
+    console.error("❌ Error al crear factura:", error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+
+// 📋 Listar todas las facturas
+router.get("/", authMiddleware(["admin", "superadmin", "cajero", "vendedor"]), async (req, res) => {
+  const { id_admin, rol, id_usuario } = req.user;
+
+  try {
+    let query = `
+      SELECT f.id_factura, f.fecha, f.total,
+             COALESCE(c.nombre, 'Sin cliente') AS cliente,
+             u.nombre AS vendedor
+      FROM facturas f
+      LEFT JOIN clientes c ON f.id_cliente = c.id_cliente
+      LEFT JOIN usuarios u ON f.id_usuario = u.id_usuario
+      WHERE f.id_admin = $1
+      ORDER BY f.fecha DESC
+    `;
+    let params = [id_admin];
+
+    if (rol === "cajero" || rol === "vendedor") {
+      query = `
+        SELECT f.id_factura, f.fecha, f.total,
+               COALESCE(c.nombre, 'Sin cliente') AS cliente,
+               u.nombre AS vendedor
+        FROM facturas f
+        LEFT JOIN clientes c ON f.id_cliente = c.id_cliente
+        LEFT JOIN usuarios u ON f.id_usuario = u.id_usuario
+        WHERE f.id_admin = $1 AND f.id_usuario = $2
+        ORDER BY f.fecha DESC
+      `;
+      params = [id_admin, id_usuario];
+    }
+
+    const facturasRes = await pool.query(query, params);
+    res.json(facturasRes.rows);
+  } catch (error) {
+    console.error("❌ Error al listar facturas:", error);
+    res.status(500).json({ error: "Error al listar facturas" });
+  }
+});
+
+
+
+
+/**
+ * 📋 Listar facturas del negocio
+ * Solo el admin puede verlas
+ */
+router.get("/:id_factura", authMiddleware(["admin", "cajero"]), async (req, res) => {
+  const { id_factura } = req.params;
+  const { id_admin, rol, id_usuario } = req.user;
+
+  try {
+    const facturaRes = await pool.query(
+      `SELECT f.id_factura, f.fecha, f.total, f.id_usuario,
+              COALESCE(c.nombre, 'Sin cliente') AS cliente,
+              u.nombre AS vendedor
+       FROM facturas f
+       LEFT JOIN clientes c ON f.id_cliente = c.id_cliente
+       LEFT JOIN usuarios u ON f.id_usuario = u.id_usuario
+       WHERE f.id_factura = $1 AND f.id_admin = $2`,
+      [id_factura, id_admin]
+    );
+
+    if (facturaRes.rows.length === 0) {
+      return res.status(404).json({ error: "Factura no encontrada o no pertenece a este negocio" });
+    }
+
+    const factura = facturaRes.rows[0];
+
+    // ✅ Comparación por ID real, no por nombre
+    if (rol === "cajero" && factura.id_usuario !== id_usuario) {
+      return res.status(403).json({ error: "No autorizado para ver esta factura" });
+    }
+
+    const detallesRes = await pool.query(
+      `SELECT p.nombre, d.cantidad, d.precio_unitario, d.subtotal
+       FROM detalle_factura d
+       INNER JOIN productos p ON d.id_producto = p.id_producto
+       WHERE d.id_factura = $1`,
+      [id_factura]
+    );
+
+    res.json({
+      factura: {
+        id_factura: factura.id_factura,
+        cliente: factura.cliente,
+        vendedor: factura.vendedor,
+        fecha: factura.fecha,
+        total: factura.total,
+        productos: detallesRes.rows,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Error al obtener factura:", error);
+    res.status(500).json({ error: "Error al obtener factura" });
+  }
+});
+
+
+
+module.exports = router;
+
+
+// ===== src\routes\productos.js =====
+
+const express = require("express");
+const pool = require("../config/db");
+const authMiddleware = require("../middleware/authMiddleware");
+
+const router = express.Router();
+
+/**
+ * 🟢 Crear producto (solo admin)
+ */
+router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
+  const { nombre, precio, stock } = req.body;
+  const id_admin = req.user.id_admin; // viene del token JWT
+
+  if (!nombre || !precio) {
+    return res.status(400).json({ error: "El nombre y el precio son obligatorios" });
+  }
+
+  try {
+    await pool.query(
+      "INSERT INTO productos (nombre, precio, stock, id_admin) VALUES ($1, $2, $3, $4)",
+      [nombre, precio, stock || 0, id_admin]
+    );
+
+    res.status(201).json({ mensaje: "Producto creado correctamente" });
+  } catch (error) {
+    console.error("❌ Error al crear producto:", error);
+    res.status(500).json({ error: "Error al crear producto" });
+  }
+});
+
+/**
+ * 🔹 Listar productos (admin, cajero o vendedor)
+ */
+router.get("/", authMiddleware(["admin", "cajero", "vendedor"]), async (req, res) => {
+  const id_admin = req.user.id_admin;
+
+  try {
+    const result = await pool.query(
+      "SELECT * FROM productos WHERE id_admin = $1 ORDER BY id_producto DESC",
+      [id_admin]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("❌ Error al listar productos:", error);
+    res.status(500).json({ error: "Error al listar productos" });
+  }
+});
+
+/**
+ * ✏️ Editar producto (solo admin)
+ */
+router.put("/:id", authMiddleware(["admin"]), async (req, res) => {
+  const { id } = req.params;
+  const { nombre, precio, stock } = req.body;
+  const id_admin = req.user.id_admin;
+
+  try {
+    const result = await pool.query(
+      "UPDATE productos SET nombre = $1, precio = $2, stock = $3 WHERE id_producto = $4 AND id_admin = $5",
+      [nombre, precio, stock, id, id_admin]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Producto no encontrado o no pertenece a este negocio" });
+    }
+
+    res.json({ mensaje: "Producto actualizado correctamente" });
+  } catch (error) {
+    console.error("❌ Error al actualizar producto:", error);
+    res.status(500).json({ error: "Error al actualizar producto" });
+  }
+});
+
+/**
+ * 🗑️ Eliminar producto (solo admin)
+ */
+router.delete("/:id", authMiddleware(["admin"]), async (req, res) => {
+  const { id } = req.params;
+  const id_admin = req.user.id_admin;
+
+  try {
+    const result = await pool.query(
+      "DELETE FROM productos WHERE id_producto = $1 AND id_admin = $2",
+      [id, id_admin]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Producto no encontrado o no pertenece a este negocio" });
+    }
+
+    res.json({ mensaje: "Producto eliminado correctamente" });
+  } catch (error) {
+    console.error("❌ Error al eliminar producto:", error);
+    res.status(500).json({ error: "Error al eliminar producto" });
+  }
+});
+
+module.exports = router;
+
+
+// ===== src\routes\users.js =====
+
+// src/routes/usuarios.js
+const express = require("express");
+const bcrypt = require("bcrypt");
+const pool = require("../config/db");
+const authMiddleware = require("../middleware/authMiddleware");
+
+const router = express.Router();
+
+// 🟢 Crear cajero o vendedor (solo para admin)
+router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
+  const { nombre, email, password, rol } = req.body;
+  const id_admin = req.user.id_admin;
+
+  // Solo se permiten roles de empleados
+  const rolesPermitidos = ["cajero", "vendedor"];
+  if (!rolesPermitidos.includes(rol)) {
+    return res.status(403).json({ error: "Rol no permitido" });
+  }
+
+   if (!nombre || !email || !password || !rol) {
+    return res.status(400).json({ error: "Faltan datos obligatorios" });
+  }
+  try {
+    const existe = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
+    if (existe.rows.length > 0) {
+      return res.status(409).json({ error: "El email ya está registrado" });
+    }
+
+    const password_hash = await bcrypt.hash(password, 10);
+
+    // id_admin viene del token del admin logueado
+   
+
+    await pool.query(
+      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin) VALUES ($1, $2, $3, $4, $5)",
+      [nombre, email, password_hash, rol, id_admin]
+    );
+
+    res.status(201).json({ mensaje: "Empleado creado correctamente" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error al crear empleado" });
+  }
+});
+
+module.exports = router;
