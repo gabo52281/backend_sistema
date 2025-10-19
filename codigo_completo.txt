@@ -88,16 +88,28 @@ app.listen(4000, () => {
 const { Pool } = require("pg");
 require("dotenv").config();
 
-const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASS,
-  port: process.env.DB_PORT,
-});
+let pool;
 
+if (process.env.DATABASE_URL) {
+  // 🌐 Conexión a Neon (producción)
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+  console.log("🌍 Conectando a base de datos Neon...");
+} else {
+  // 💻 Conexión local
+  pool = new Pool({
+    user: process.env.DB_USER,
+    host: process.env.DB_HOST,
+    database: process.env.DB_NAME,
+    password: process.env.DB_PASS,
+    port: process.env.DB_PORT,
+  });
+  console.log("💻 Conectando a base de datos local...");
+}
 
-// ✅ Probar conexión apenas inicie el servidor
+// ✅ Prueba inmediata
 pool.query("SELECT current_database(), NOW()", (err, res) => {
   if (err) {
     console.error("❌ Error conectando a la base de datos:", err.message);
@@ -106,8 +118,6 @@ pool.query("SELECT current_database(), NOW()", (err, res) => {
     console.log("🕒 Hora del servidor:", res.rows[0].now);
   }
 });
-
-console.log("📡 Conectado a:", process.env.DB_NAME);
 
 module.exports = pool;
 
@@ -219,6 +229,26 @@ router.post("/crear", authMiddleware(["superadmin"]), async (req, res) => {
   } catch (error) {
     console.error("❌ Error al crear negocio y administrador:", error);
     res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+/**
+ * 📋 Listar todos los administradores y negocios
+ * Solo el superadmin puede ver esta información
+ */
+router.get("/", authMiddleware(["superadmin"]), async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT a.id_admin, a.nombre_negocio, a.email_contacto,
+             u.nombre AS admin_nombre, u.email AS admin_email
+      FROM administradores a
+      LEFT JOIN usuarios u ON a.id_admin = u.id_admin AND u.rol = 'admin'
+      ORDER BY a.id_admin DESC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error("❌ Error al listar administradores:", error);
+    res.status(500).json({ error: "Error al listar administradores" });
   }
 });
 
@@ -753,5 +783,25 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
     res.status(500).json({ error: "Error al crear empleado" });
   }
 });
+
+
+/**
+ * 📋 Listar empleados (cajeros y vendedores) del negocio del admin
+ */
+router.get("/", authMiddleware(["admin"]), async (req, res) => {
+  const id_admin = req.user.id_admin;
+
+  try {
+    const result = await pool.query(
+      "SELECT id_usuario, nombre, email, rol FROM usuarios WHERE id_admin = $1 AND rol IN ('cajero', 'vendedor') ORDER BY id_usuario DESC",
+      [id_admin]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("❌ Error al listar empleados:", error);
+    res.status(500).json({ error: "Error al listar empleados" });
+  }
+});
+
 
 module.exports = router;

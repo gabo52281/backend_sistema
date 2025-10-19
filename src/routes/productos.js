@@ -71,6 +71,44 @@ router.put("/:id", authMiddleware(["admin"]), async (req, res) => {
   }
 });
 
+
+
+/**
+ * ➕ Añadir existencias a un producto (solo admin)
+ */
+router.put("/:id/añadir-stock", authMiddleware(["admin"]), async (req, res) => {
+  const { id } = req.params;
+  const { cantidad } = req.body;
+  const id_admin = req.user.id_admin;
+
+  if (!cantidad || cantidad <= 0) {
+    return res.status(400).json({ error: "La cantidad debe ser mayor a 0" });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE productos 
+       SET stock = stock + $1 
+       WHERE id_producto = $2 AND id_admin = $3 
+       RETURNING *`,
+      [cantidad, id, id_admin]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Producto no encontrado o no pertenece a este negocio" });
+    }
+
+    res.json({
+      mensaje: `Se añadieron ${cantidad} unidades al producto "${result.rows[0].nombre}"`,
+      producto: result.rows[0],
+    });
+  } catch (error) {
+    console.error("❌ Error al añadir stock:", error);
+    res.status(500).json({ error: "Error al añadir stock" });
+  }
+});
+
+
 /**
  * 🗑️ Eliminar producto (solo admin)
  */
