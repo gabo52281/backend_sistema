@@ -76,7 +76,7 @@ router.put("/:id", authMiddleware(["admin"]), async (req, res) => {
 /**
  * ➕ Añadir existencias a un producto (solo admin)
  */
-router.put("/:id/añadir-stock", authMiddleware(["admin"]), async (req, res) => {
+router.put("/:id/anadir-stock", authMiddleware(["admin"]), async (req, res) => {
   const { id } = req.params;
   const { cantidad } = req.body;
   const id_admin = req.user.id_admin;
@@ -99,11 +99,11 @@ router.put("/:id/añadir-stock", authMiddleware(["admin"]), async (req, res) => 
     }
 
     res.json({
-      mensaje: `Se añadieron ${cantidad} unidades al producto "${result.rows[0].nombre}"`,
+      mensaje: `Se anadieron ${cantidad} unidades al producto "${result.rows[0].nombre}"`,
       producto: result.rows[0],
     });
   } catch (error) {
-    console.error("❌ Error al añadir stock:", error);
+    console.error("❌ Error al anadir stock:", error);
     res.status(500).json({ error: "Error al añadir stock" });
   }
 });
