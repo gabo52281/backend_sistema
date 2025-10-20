@@ -9,7 +9,7 @@ const router = express.Router();
  * Solo pueden hacerlo admin o cajeros
  */
 router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
-  const { nombre, telefono, direccion } = req.body;
+  const { nombre, telefono, cedula, direccion } = req.body;
   const { id_admin } = req.user;
 
   if (!nombre) {
@@ -17,10 +17,21 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
   }
 
   try {
+    // Si se envía cedula, verificar unicidad dentro del mismo negocio
+    if (cedula) {
+      const existeCedula = await pool.query(
+        "SELECT id_cliente FROM clientes WHERE cedula = $1 AND id_admin = $2",
+        [cedula, id_admin]
+      );
+      if (existeCedula.rows.length > 0) {
+        return res.status(409).json({ error: "La cédula ya está registrada para este negocio" });
+      }
+    }
+
     await pool.query(
-      `INSERT INTO clientes (nombre, telefono, direccion, id_admin)
-       VALUES ($1, $2, $3, $4)`,
-      [nombre, telefono || null, direccion || null, id_admin]
+      `INSERT INTO clientes (nombre, telefono, cedula, direccion, id_admin)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [nombre, telefono || null, cedula || null, direccion || null, id_admin]
     );
 
     res.status(201).json({ mensaje: "Cliente registrado correctamente" });
@@ -38,7 +49,7 @@ router.get("/", authMiddleware(["admin", "cajero"]), async (req, res) => {
 
   try {
     const result = await pool.query(
-      "SELECT * FROM clientes WHERE id_admin = $1 ORDER BY creado_en DESC",
+      "SELECT id_cliente, nombre, telefono, cedula, direccion, creado_en FROM clientes WHERE id_admin = $1 ORDER BY creado_en DESC",
       [id_admin]
     );
     res.json(result.rows);
@@ -54,15 +65,26 @@ router.get("/", authMiddleware(["admin", "cajero"]), async (req, res) => {
  */
 router.put("/:id_cliente", authMiddleware(["admin"]), async (req, res) => {
   const { id_cliente } = req.params;
-  const { nombre, telefono, direccion } = req.body;
+  const { nombre, telefono, direccion, cedula } = req.body;
   const { id_admin } = req.user;
 
   try {
+    // Si se proporciona cedula, asegurarse que no la tenga otro cliente del mismo negocio
+    if (cedula) {
+      const existe = await pool.query(
+        "SELECT id_cliente FROM clientes WHERE cedula = $1 AND id_admin = $2 AND id_cliente != $3",
+        [cedula, id_admin, id_cliente]
+      );
+      if (existe.rows.length > 0) {
+        return res.status(409).json({ error: "La cédula ya está registrada en otro cliente" });
+      }
+    }
+
     const result = await pool.query(
       `UPDATE clientes 
-       SET nombre = $1, telefono = $2, direccion = $3
-       WHERE id_cliente = $4 AND id_admin = $5`,
-      [nombre, telefono, direccion, id_cliente, id_admin]
+       SET nombre = $1, telefono = $2, direccion = $3, cedula = $4
+       WHERE id_cliente = $5 AND id_admin = $6`,
+      [nombre, telefono, direccion, cedula || null, id_cliente, id_admin]
     );
 
     if (result.rowCount === 0) {

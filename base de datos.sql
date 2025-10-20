@@ -20,6 +20,7 @@ CREATE TABLE clientes (
     id_cliente SERIAL PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL,
     telefono VARCHAR(20),
+    cedula VARCHAR(20) UNIQUE,
     direccion TEXT,
     id_admin INT NOT NULL REFERENCES administradores(id_admin) ON DELETE CASCADE,
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -53,4 +54,10 @@ CREATE TABLE detalle_factura (
     subtotal NUMERIC(12,2) GENERATED ALWAYS AS (cantidad * precio_unitario) STORED
 );
 
-
+INSERT INTO usuarios (nombre, email, password_hash, rol)
+VALUES (
+  'Superadmin',
+  'super@admin.com',
+  '$2b$10$4b4y7yXJzNJHgfj.SpcB4OPFvbBgCXSZL3gQZEW79UsgcQrgRFxSO',
+  'superadmin'
+);
