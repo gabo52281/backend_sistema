@@ -8,17 +8,17 @@ const router = express.Router();
  * 🟢 Crear producto (solo admin)
  */
 router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
-  const { nombre, precio, stock } = req.body;
+  const { nombre, precio, stock, precio_compra } = req.body;
   const id_admin = req.user.id_admin; // viene del token JWT
 
-  if (!nombre || !precio) {
+  if (!nombre || !precio || !precio_compra) {
     return res.status(400).json({ error: "El nombre y el precio son obligatorios" });
   }
 
   try {
     await pool.query(
-      "INSERT INTO productos (nombre, precio, stock, id_admin) VALUES ($1, $2, $3, $4)",
-      [nombre, precio, stock || 0, id_admin]
+      "INSERT INTO productos (nombre, precio, precio_compra, stock, id_admin) VALUES ($1, $2, $3, $4)",
+      [nombre, precio, stock, precio_compra || 0, id_admin]
     );
 
     res.status(201).json({ mensaje: "Producto creado correctamente" });

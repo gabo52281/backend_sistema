@@ -32,6 +32,7 @@ CREATE TABLE productos (
     id_producto SERIAL PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL,
     precio NUMERIC(12,2) NOT NULL,
+    precio_compra NUMERIC(10,2) NOT NULL DEFAULT 0,
     stock INT NOT NULL DEFAULT 0,
     id_admin INT NOT NULL REFERENCES administradores(id_admin) ON DELETE CASCADE,
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -53,6 +54,9 @@ CREATE TABLE detalle_factura (
     precio_unitario NUMERIC(12,2) NOT NULL,
     subtotal NUMERIC(12,2) GENERATED ALWAYS AS (cantidad * precio_unitario) STORED
 );
+
+
+
 
 INSERT INTO usuarios (nombre, email, password_hash, rol)
 VALUES (

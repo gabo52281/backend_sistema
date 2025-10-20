@@ -15,15 +15,17 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    let total = 0;
 
-    // 🔹 Validar y actualizar stock de cada producto
+    let total = 0;
+    let ganancia_total = 0; // 🆕 nueva variable
+
+    // 🔹 Validar, actualizar stock y calcular ganancia
     for (const item of productos) {
       const { id_producto, cantidad } = item;
 
-      // Bloquea el producto durante la transacción
+      // Bloquear el producto durante la transacción
       const prodRes = await client.query(
-        "SELECT precio, stock FROM productos WHERE id_producto = $1 AND id_admin = $2 FOR UPDATE",
+        "SELECT precio, precio_compra, stock FROM productos WHERE id_producto = $1 AND id_admin = $2 FOR UPDATE",
         [id_producto, id_admin]
       );
 
@@ -31,37 +33,34 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
         throw new Error(`Producto ${id_producto} no encontrado`);
       }
 
-      const { precio, stock } = prodRes.rows[0];
+      const { precio, precio_compra, stock } = prodRes.rows[0];
       if (stock < cantidad) {
         throw new Error(`Stock insuficiente para el producto ${id_producto}`);
       }
 
       total += precio * cantidad;
+      ganancia_total += (precio - precio_compra) * cantidad; // 🆕 calcular ganancia
 
-      // 🔸 Actualiza el stock
-      const upd = await client.query(
+      // Actualizar stock
+      await client.query(
         `UPDATE productos
          SET stock = stock - $1
          WHERE id_producto = $2
            AND id_admin = $3
-           AND stock >= $1
-         RETURNING stock`,
+           AND stock >= $1`,
         [cantidad, id_producto, id_admin]
       );
-
-      if (upd.rowCount === 0) {
-        throw new Error(`No se pudo actualizar el stock para el producto ${id_producto}`);
-      }
     }
 
-    // 🔹 Crear la factura principal
+    // 🔹 Crear la factura con la ganancia incluida
     const facturaResult = await client.query(
-      "INSERT INTO facturas (id_cliente, id_usuario, id_admin, total) VALUES ($1, $2, $3, $4) RETURNING id_factura",
-      [id_cliente || null, id_usuario, id_admin, total]
+      "INSERT INTO facturas (id_cliente, id_usuario, id_admin, total, ganancia) VALUES ($1, $2, $3, $4, $5) RETURNING id_factura",
+      [id_cliente || null, id_usuario, id_admin, total, ganancia_total]
     );
+
     const id_factura = facturaResult.rows[0].id_factura;
 
-    // 🔹 Insertar los detalles de la factura
+    // 🔹 Insertar los detalles
     for (const item of productos) {
       const { id_producto, cantidad } = item;
       const precioRes = await client.query(
@@ -82,13 +81,10 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
       mensaje: "Factura registrada correctamente",
       id_factura,
       total,
+      ganancia_total, // 🆕 devolver también la ganancia
     });
   } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch (e) {
-      console.error("Error durante el ROLLBACK:", e);
-    }
+    await client.query("ROLLBACK");
     console.error("❌ Error al crear factura:", error);
     res.status(500).json({ error: error.message });
   } finally {
