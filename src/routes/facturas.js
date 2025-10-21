@@ -78,10 +78,13 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
     await client.query("COMMIT");
 
     res.status(201).json({
-      mensaje: "Factura registrada correctamente",
-      id_factura,
-      total,
-      ganancia_total, // 🆕 devolver también la ganancia
+        mensaje: "Factura registrada correctamente",
+        id_factura,
+        fecha: fechaFactura,
+        total,
+        cliente: clienteNombre,
+        vendedor: vendedorRes.rows[0].nombre,
+        ganancia_total
     });
   } catch (error) {
     await client.query("ROLLBACK");
