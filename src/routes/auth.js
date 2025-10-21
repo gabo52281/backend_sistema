@@ -43,12 +43,29 @@ router.post("/login", async (req, res) => {
     );
 
     // enviamos el token y el rol en la respuesta
+    // Si el usuario es admin, obtener también el nombre del negocio
+    let nombre_negocio = null;
+    try {
+      if (user.id_admin) {
+        const adminRes = await pool.query(
+          'SELECT nombre_negocio FROM administradores WHERE id_admin = $1',
+          [user.id_admin]
+        );
+        nombre_negocio = adminRes.rows[0]?.nombre_negocio || null;
+      }
+    } catch (err) {
+      console.error('Error obteniendo nombre de negocio:', err);
+      // no bloqueamos el login por este error; devolvemos null en nombre_negocio
+      nombre_negocio = null;
+    }
+
     res.json({
       token,
       rol: user.rol,
       id_usuario: user.id_usuario,
       id_admin: user.id_admin,
-      nombre: user.nombre
+      nombre: user.nombre,
+      nombre_negocio
     });
     
   } catch (error) {
