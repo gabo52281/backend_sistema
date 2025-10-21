@@ -11,6 +11,10 @@ const router = express.Router();
 router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
   const { productos, id_cliente } = req.body; // productos: [{ id_producto, cantidad }]
   const { id_usuario, id_admin } = req.user;
+  // validate payload
+  if (!Array.isArray(productos) || productos.length === 0) {
+    return res.status(400).json({ error: "La factura debe contener al menos un producto" });
+  }
 
   const client = await pool.connect();
   try {
@@ -21,7 +25,12 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
 
     // 🔹 Validar, actualizar stock y calcular ganancia
     for (const item of productos) {
-      const { id_producto, cantidad } = item;
+      const id_producto = Number(item.id_producto);
+      const cantidad = Number(item.cantidad);
+
+      if (!Number.isFinite(id_producto) || !Number.isFinite(cantidad) || cantidad <= 0) {
+        throw new Error(`Producto inválido o cantidad no válida (id: ${item.id_producto})`);
+      }
 
       // Bloquear el producto durante la transacción
       const prodRes = await client.query(
@@ -52,17 +61,19 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
       );
     }
 
-    // 🔹 Crear la factura con la ganancia incluida
+    // 🔹 Crear la factura con la ganancia incluida y devolver fecha
     const facturaResult = await client.query(
-      "INSERT INTO facturas (id_cliente, id_usuario, id_admin, total, ganancia) VALUES ($1, $2, $3, $4, $5) RETURNING id_factura",
-      [id_cliente || null, id_usuario, id_admin, total, ganancia_total]
+      "INSERT INTO facturas (id_cliente, id_usuario, id_admin, total, ganancia) VALUES ($1, $2, $3, $4, $5) RETURNING id_factura, fecha",
+      [id_cliente || null, id_usuario || null, id_admin, total, ganancia_total]
     );
 
     const id_factura = facturaResult.rows[0].id_factura;
+    const fechaFactura = facturaResult.rows[0].fecha;
 
     // 🔹 Insertar los detalles
     for (const item of productos) {
-      const { id_producto, cantidad } = item;
+      const id_producto = Number(item.id_producto);
+      const cantidad = Number(item.cantidad);
       const precioRes = await client.query(
         "SELECT precio FROM productos WHERE id_producto = $1 AND id_admin = $2",
         [id_producto, id_admin]
@@ -75,16 +86,29 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
       );
     }
 
+    // Obtener nombre del cliente (si existe) y nombre del vendedor
+    let clienteNombre = null;
+    if (id_cliente) {
+      const cRes = await client.query("SELECT nombre FROM clientes WHERE id_cliente = $1 AND id_admin = $2", [id_cliente, id_admin]);
+      if (cRes.rows.length) clienteNombre = cRes.rows[0].nombre;
+    }
+
+    let vendedorNombre = null;
+    if (id_usuario) {
+      const vRes = await client.query("SELECT nombre FROM usuarios WHERE id_usuario = $1", [id_usuario]);
+      if (vRes.rows.length) vendedorNombre = vRes.rows[0].nombre;
+    }
+
     await client.query("COMMIT");
 
     res.status(201).json({
-        mensaje: "Factura registrada correctamente",
-        id_factura,
-        fecha: fechaFactura,
-        total,
-        cliente: clienteNombre,
-        vendedor: vendedorRes.rows[0].nombre,
-        ganancia_total
+      mensaje: "Factura registrada correctamente",
+      id_factura,
+      fecha: fechaFactura,
+      total,
+      cliente: clienteNombre || 'Sin cliente',
+      vendedor: vendedorNombre,
+      ganancia_total
     });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -170,7 +194,7 @@ router.get("/:id_factura", authMiddleware(["admin", "cajero"]), async (req, res)
     }
 
     const detallesRes = await pool.query(
-      `SELECT p.nombre, d.cantidad, d.precio_unitario, d.subtotal
+      `SELECT p.nombre, d.cantidad, d.precio_unitario, (d.precio_unitario * d.cantidad) AS subtotal
        FROM detalle_factura d
        INNER JOIN productos p ON d.id_producto = p.id_producto
        WHERE d.id_factura = $1`,
