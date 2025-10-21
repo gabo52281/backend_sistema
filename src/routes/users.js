@@ -43,6 +43,61 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
   }
 });
 
+// ➕ Editar empleado (nombre, email, rol o contraseña)
+router.put("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
+  const { id_usuario } = req.params;
+  const { nombre, email, password, rol } = req.body;
+  const id_admin = req.user.id_admin;
+
+  try {
+    // Verificar si pertenece a su negocio
+    const existe = await pool.query(
+      "SELECT * FROM usuarios WHERE id_usuario = $1 AND id_admin = $2",
+      [id_usuario, id_admin]
+    );
+    if (existe.rows.length === 0) {
+      return res.status(404).json({ error: "Empleado no pertenece a este negocio" });
+    }
+
+    // Hash opcional de contraseña
+    let password_hash = existe.rows[0].password_hash;
+    if (password) password_hash = await bcrypt.hash(password, 10);
+
+    await pool.query(
+      `UPDATE usuarios SET nombre = $1, email = $2, password_hash = $3, rol = $4 
+       WHERE id_usuario = $5 AND id_admin = $6`,
+      [nombre, email, password_hash, rol, id_usuario, id_admin]
+    );
+
+    res.json({ mensaje: "Empleado actualizado correctamente" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al actualizar empleado" });
+  }
+});
+
+// 🗑️ Eliminar empleado
+router.delete("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
+  const { id_usuario } = req.params;
+  const id_admin = req.user.id_admin;
+
+  try {
+    const result = await pool.query(
+      "DELETE FROM usuarios WHERE id_usuario = $1 AND id_admin = $2",
+      [id_usuario, id_admin]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Empleado no encontrado o no pertenece a este negocio" });
+    }
+    res.json({ mensaje: "Empleado eliminado correctamente" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al eliminar empleado" });
+  }
+});
+
+
 
 /**
  * 📋 Listar empleados (cajeros y vendedores) del negocio del admin
