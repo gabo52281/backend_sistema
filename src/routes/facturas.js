@@ -218,5 +218,60 @@ router.get("/:id_factura", authMiddleware(["admin", "cajero"]), async (req, res)
 });
 
 
+// 🗑️ Eliminar factura (admin o superadmin)
+router.delete("/:id_factura", authMiddleware(["admin", "superadmin"]), async (req, res) => {
+  const { id_factura } = req.params;
+  const { id_admin, rol } = req.user;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Verificar existencia
+    const fRes = await client.query('SELECT id_factura FROM facturas WHERE id_factura = $1 AND id_admin = $2', [id_factura, id_admin]);
+    if (fRes.rows.length === 0) {
+      // si es superadmin, permitir eliminar sin filtrar por id_admin
+      if (rol === 'superadmin') {
+        const fAll = await client.query('SELECT id_factura FROM facturas WHERE id_factura = $1', [id_factura]);
+        if (fAll.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Factura no encontrada' });
+        }
+      } else {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Factura no encontrada o no pertenece a este negocio' });
+      }
+    }
+
+    // Restaurar stock: obtener detalles y sumar las cantidades
+    // Obtener id_admin de la factura (si no se obtuvo antes)
+    let facturaAdminId = id_admin;
+    if (!facturaAdminId) {
+      const fAll = await client.query('SELECT id_admin FROM facturas WHERE id_factura = $1', [id_factura]);
+      facturaAdminId = fAll.rows[0]?.id_admin || null;
+    }
+
+    const detalles = await client.query('SELECT id_producto, cantidad FROM detalle_factura WHERE id_factura = $1', [id_factura]);
+    for (const d of detalles.rows) {
+      // Restaurar stock solo si el producto pertenece al mismo id_admin de la factura
+      await client.query('UPDATE productos SET stock = stock + $1 WHERE id_producto = $2 AND id_admin = $3', [d.cantidad, d.id_producto, facturaAdminId]);
+    }
+
+    // Borrar detalles y factura
+    await client.query('DELETE FROM detalle_factura WHERE id_factura = $1', [id_factura]);
+    await client.query('DELETE FROM facturas WHERE id_factura = $1', [id_factura]);
+
+    await client.query('COMMIT');
+    res.json({ mensaje: 'Factura eliminada correctamente', id_factura });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Error al eliminar factura:', error);
+    res.status(500).json({ error: 'Error al eliminar factura' });
+  } finally {
+    client.release();
+  }
+});
+
+
 
 module.exports = router;
