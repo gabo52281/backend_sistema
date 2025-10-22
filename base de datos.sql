@@ -38,14 +38,16 @@ CREATE TABLE productos (
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE facturas (
+CCREATE TABLE facturas ( 
     id_factura SERIAL PRIMARY KEY,
     id_cliente INT REFERENCES clientes(id_cliente) ON DELETE SET NULL,
     id_usuario INT REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
     id_admin INT NOT NULL REFERENCES administradores(id_admin) ON DELETE CASCADE,
     fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    total NUMERIC(12,2) NOT NULL
+    total NUMERIC(12,2) NOT NULL,
+    ganancia NUMERIC(10,2) DEFAULT 0  
 );
+
 CREATE TABLE detalle_factura (
     id_detalle SERIAL PRIMARY KEY,
     id_factura INT NOT NULL REFERENCES facturas(id_factura) ON DELETE CASCADE,
