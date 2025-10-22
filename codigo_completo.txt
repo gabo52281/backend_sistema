@@ -302,12 +302,29 @@ router.post("/login", async (req, res) => {
     );
 
     // enviamos el token y el rol en la respuesta
+    // Si el usuario es admin, obtener también el nombre del negocio
+    let nombre_negocio = null;
+    try {
+      if (user.id_admin) {
+        const adminRes = await pool.query(
+          'SELECT nombre_negocio FROM administradores WHERE id_admin = $1',
+          [user.id_admin]
+        );
+        nombre_negocio = adminRes.rows[0]?.nombre_negocio || null;
+      }
+    } catch (err) {
+      console.error('Error obteniendo nombre de negocio:', err);
+      // no bloqueamos el login por este error; devolvemos null en nombre_negocio
+      nombre_negocio = null;
+    }
+
     res.json({
       token,
       rol: user.rol,
       id_usuario: user.id_usuario,
       id_admin: user.id_admin,
-      nombre: user.nombre
+      nombre: user.nombre,
+      nombre_negocio
     });
     
   } catch (error) {
@@ -469,6 +486,10 @@ const router = express.Router();
 router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
   const { productos, id_cliente } = req.body; // productos: [{ id_producto, cantidad }]
   const { id_usuario, id_admin } = req.user;
+  // validate payload
+  if (!Array.isArray(productos) || productos.length === 0) {
+    return res.status(400).json({ error: "La factura debe contener al menos un producto" });
+  }
 
   const client = await pool.connect();
   try {
@@ -479,7 +500,12 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
 
     // 🔹 Validar, actualizar stock y calcular ganancia
     for (const item of productos) {
-      const { id_producto, cantidad } = item;
+      const id_producto = Number(item.id_producto);
+      const cantidad = Number(item.cantidad);
+
+      if (!Number.isFinite(id_producto) || !Number.isFinite(cantidad) || cantidad <= 0) {
+        throw new Error(`Producto inválido o cantidad no válida (id: ${item.id_producto})`);
+      }
 
       // Bloquear el producto durante la transacción
       const prodRes = await client.query(
@@ -510,17 +536,19 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
       );
     }
 
-    // 🔹 Crear la factura con la ganancia incluida
+    // 🔹 Crear la factura con la ganancia incluida y devolver fecha
     const facturaResult = await client.query(
-      "INSERT INTO facturas (id_cliente, id_usuario, id_admin, total, ganancia) VALUES ($1, $2, $3, $4, $5) RETURNING id_factura",
-      [id_cliente || null, id_usuario, id_admin, total, ganancia_total]
+      "INSERT INTO facturas (id_cliente, id_usuario, id_admin, total, ganancia) VALUES ($1, $2, $3, $4, $5) RETURNING id_factura, fecha",
+      [id_cliente || null, id_usuario || null, id_admin, total, ganancia_total]
     );
 
     const id_factura = facturaResult.rows[0].id_factura;
+    const fechaFactura = facturaResult.rows[0].fecha;
 
     // 🔹 Insertar los detalles
     for (const item of productos) {
-      const { id_producto, cantidad } = item;
+      const id_producto = Number(item.id_producto);
+      const cantidad = Number(item.cantidad);
       const precioRes = await client.query(
         "SELECT precio FROM productos WHERE id_producto = $1 AND id_admin = $2",
         [id_producto, id_admin]
@@ -533,13 +561,29 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
       );
     }
 
+    // Obtener nombre del cliente (si existe) y nombre del vendedor
+    let clienteNombre = null;
+    if (id_cliente) {
+      const cRes = await client.query("SELECT nombre FROM clientes WHERE id_cliente = $1 AND id_admin = $2", [id_cliente, id_admin]);
+      if (cRes.rows.length) clienteNombre = cRes.rows[0].nombre;
+    }
+
+    let vendedorNombre = null;
+    if (id_usuario) {
+      const vRes = await client.query("SELECT nombre FROM usuarios WHERE id_usuario = $1", [id_usuario]);
+      if (vRes.rows.length) vendedorNombre = vRes.rows[0].nombre;
+    }
+
     await client.query("COMMIT");
 
     res.status(201).json({
       mensaje: "Factura registrada correctamente",
       id_factura,
+      fecha: fechaFactura,
       total,
-      ganancia_total, // 🆕 devolver también la ganancia
+      cliente: clienteNombre || 'Sin cliente',
+      vendedor: vendedorNombre,
+      ganancia_total
     });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -625,7 +669,7 @@ router.get("/:id_factura", authMiddleware(["admin", "cajero"]), async (req, res)
     }
 
     const detallesRes = await pool.query(
-      `SELECT p.nombre, d.cantidad, d.precio_unitario, d.subtotal
+      `SELECT p.nombre, d.cantidad, d.precio_unitario, (d.precio_unitario * d.cantidad) AS subtotal
        FROM detalle_factura d
        INNER JOIN productos p ON d.id_producto = p.id_producto
        WHERE d.id_factura = $1`,
@@ -649,6 +693,61 @@ router.get("/:id_factura", authMiddleware(["admin", "cajero"]), async (req, res)
 });
 
 
+// 🗑️ Eliminar factura (admin o superadmin)
+router.delete("/:id_factura", authMiddleware(["admin", "superadmin"]), async (req, res) => {
+  const { id_factura } = req.params;
+  const { id_admin, rol } = req.user;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Verificar existencia
+    const fRes = await client.query('SELECT id_factura FROM facturas WHERE id_factura = $1 AND id_admin = $2', [id_factura, id_admin]);
+    if (fRes.rows.length === 0) {
+      // si es superadmin, permitir eliminar sin filtrar por id_admin
+      if (rol === 'superadmin') {
+        const fAll = await client.query('SELECT id_factura FROM facturas WHERE id_factura = $1', [id_factura]);
+        if (fAll.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Factura no encontrada' });
+        }
+      } else {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Factura no encontrada o no pertenece a este negocio' });
+      }
+    }
+
+    // Restaurar stock: obtener detalles y sumar las cantidades
+    // Obtener id_admin de la factura (si no se obtuvo antes)
+    let facturaAdminId = id_admin;
+    if (!facturaAdminId) {
+      const fAll = await client.query('SELECT id_admin FROM facturas WHERE id_factura = $1', [id_factura]);
+      facturaAdminId = fAll.rows[0]?.id_admin || null;
+    }
+
+    const detalles = await client.query('SELECT id_producto, cantidad FROM detalle_factura WHERE id_factura = $1', [id_factura]);
+    for (const d of detalles.rows) {
+      // Restaurar stock solo si el producto pertenece al mismo id_admin de la factura
+      await client.query('UPDATE productos SET stock = stock + $1 WHERE id_producto = $2 AND id_admin = $3', [d.cantidad, d.id_producto, facturaAdminId]);
+    }
+
+    // Borrar detalles y factura
+    await client.query('DELETE FROM detalle_factura WHERE id_factura = $1', [id_factura]);
+    await client.query('DELETE FROM facturas WHERE id_factura = $1', [id_factura]);
+
+    await client.query('COMMIT');
+    res.json({ mensaje: 'Factura eliminada correctamente', id_factura });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Error al eliminar factura:', error);
+    res.status(500).json({ error: 'Error al eliminar factura' });
+  } finally {
+    client.release();
+  }
+});
+
+
 
 module.exports = router;
 
@@ -668,14 +767,19 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
   const { nombre, precio, stock, precio_compra } = req.body;
   const id_admin = req.user.id_admin; // viene del token JWT
 
-  if (!nombre || !precio || !precio_compra) {
-    return res.status(400).json({ error: "El nombre y el precio son obligatorios" });
+  // Normalizar valores numéricos
+  const precioNum = Number(precio);
+  const precioCompraNum = precio_compra !== undefined && precio_compra !== null ? Number(precio_compra) : 0;
+  const stockNum = stock !== undefined && stock !== null ? Number(stock) : 0;
+
+  if (!nombre || isNaN(precioNum)) {
+    return res.status(400).json({ error: "El nombre y el precio son obligatorios y deben ser numéricos" });
   }
 
   try {
     await pool.query(
-      "INSERT INTO productos (nombre, precio, precio_compra, stock, id_admin) VALUES ($1, $2, $3, $4)",
-      [nombre, precio, stock, precio_compra || 0, id_admin]
+      "INSERT INTO productos (nombre, precio, precio_compra, stock, id_admin) VALUES ($1, $2, $3, $4, $5)",
+      [nombre, precioNum, precioCompraNum || 0, stockNum || 0, id_admin]
     );
 
     res.status(201).json({ mensaje: "Producto creado correctamente" });
@@ -839,6 +943,61 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
     res.status(500).json({ error: "Error al crear empleado" });
   }
 });
+
+// ➕ Editar empleado (nombre, email, rol o contraseña)
+router.put("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
+  const { id_usuario } = req.params;
+  const { nombre, email, password, rol } = req.body;
+  const id_admin = req.user.id_admin;
+
+  try {
+    // Verificar si pertenece a su negocio
+    const existe = await pool.query(
+      "SELECT * FROM usuarios WHERE id_usuario = $1 AND id_admin = $2",
+      [id_usuario, id_admin]
+    );
+    if (existe.rows.length === 0) {
+      return res.status(404).json({ error: "Empleado no pertenece a este negocio" });
+    }
+
+    // Hash opcional de contraseña
+    let password_hash = existe.rows[0].password_hash;
+    if (password) password_hash = await bcrypt.hash(password, 10);
+
+    await pool.query(
+      `UPDATE usuarios SET nombre = $1, email = $2, password_hash = $3, rol = $4 
+       WHERE id_usuario = $5 AND id_admin = $6`,
+      [nombre, email, password_hash, rol, id_usuario, id_admin]
+    );
+
+    res.json({ mensaje: "Empleado actualizado correctamente" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al actualizar empleado" });
+  }
+});
+
+// 🗑️ Eliminar empleado
+router.delete("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
+  const { id_usuario } = req.params;
+  const id_admin = req.user.id_admin;
+
+  try {
+    const result = await pool.query(
+      "DELETE FROM usuarios WHERE id_usuario = $1 AND id_admin = $2",
+      [id_usuario, id_admin]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Empleado no encontrado o no pertenece a este negocio" });
+    }
+    res.json({ mensaje: "Empleado eliminado correctamente" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al eliminar empleado" });
+  }
+});
+
 
 
 /**

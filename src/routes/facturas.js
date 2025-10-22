@@ -273,5 +273,46 @@ router.delete("/:id_factura", authMiddleware(["admin", "superadmin"]), async (re
 });
 
 
+// 📊 Reporte de ventas por fecha (solo admin o superadmin)
+router.get("/reporte", authMiddleware(["admin"]), async (req, res) => {
+  const { id_admin } = req.user;
+  const { inicio, fin } = req.query;
+
+  if (!inicio || !fin) {
+    return res.status(400).json({ error: "Debes enviar inicio y fin (YYYY-MM-DD)" });
+  }
+
+  try {
+    const ventas = await pool.query(
+      `SELECT f.id_factura, f.fecha, f.total, f.ganancia,
+              COALESCE(c.nombre, 'Sin cliente') AS cliente,
+              u.nombre AS vendedor
+       FROM facturas f
+       LEFT JOIN clientes c ON f.id_cliente = c.id_cliente
+       LEFT JOIN usuarios u ON f.id_usuario = u.id_usuario
+       WHERE f.id_admin = $1 AND DATE(f.fecha) BETWEEN $2 AND $3
+       ORDER BY f.fecha ASC`,
+      [id_admin, inicio, fin]
+    );
+
+    const totalVentas = ventas.rows.reduce((sum, v) => sum + Number(v.total), 0);
+    const totalGanancia = ventas.rows.reduce((sum, v) => sum + Number(v.ganancia), 0);
+
+    res.json({
+      inicio,
+      fin,
+      cantidad_facturas: ventas.rowCount,
+      total_ventas: totalVentas,
+      total_ganancia: totalGanancia,
+      detalle: ventas.rows,
+    });
+  } catch (error) {
+    console.error("❌ Error al generar reporte:", error);
+    res.status(500).json({ error: "Error interno al generar reporte" });
+  }
+});
+
+
+
 
 module.exports = router;
