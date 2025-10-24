@@ -8,7 +8,7 @@ const router = express.Router();
 
 // 🟢 Crear cajero o vendedor (solo para admin)
 router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
-  const { nombre, email, password, rol, direccion, telefono} = req.body;
+  const { nombre, email, password, rol, direccion, telefono } = req.body;
   const id_admin = req.user.id_admin;
 
   // Solo se permiten roles de empleados
@@ -17,9 +17,10 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
     return res.status(403).json({ error: "Rol no permitido" });
   }
 
-   if (!nombre || !email || !password || !rol || !direccion || !telefono) {
+  if (!nombre || !email || !password || !rol || !direccion || !telefono) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
+
   try {
     const existe = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
     if (existe.rows.length > 0) {
@@ -28,9 +29,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
 
     const password_hash = await bcrypt.hash(password, 10);
 
-    // id_admin viene del token del admin logueado
-   
-
+    // ✅ CORREGIDO: 7 columnas y 7 placeholders
     await pool.query(
       "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5, $6, $7)",
       [nombre, email, password_hash, rol, id_admin, direccion, telefono]
@@ -38,7 +37,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
 
     res.status(201).json({ mensaje: "Empleado creado correctamente" });
   } catch (error) {
-    console.error(error);
+    console.error("Error al crear empleado:", error);
     res.status(500).json({ error: "Error al crear empleado" });
   }
 });
@@ -48,11 +47,10 @@ router.put("/perfil", authMiddleware(["admin", "superadmin", "cajero"]), async (
   const { id_usuario } = req.user; // viene del token
   const { nombre, telefono, direccion } = req.body;
 
-  
   try {
     await pool.query(
       "UPDATE usuarios SET nombre = $1, telefono = $2, direccion = $3 WHERE id_usuario = $4",
-      [nombre, telefono || null, direccion || null, id_usuario]  // ✅ Esto está bien
+      [nombre, telefono || null, direccion || null, id_usuario]
     );
 
     res.json({ mensaje: "Perfil actualizado correctamente" });
@@ -61,7 +59,6 @@ router.put("/perfil", authMiddleware(["admin", "superadmin", "cajero"]), async (
     res.status(500).json({ error: "Error al actualizar perfil" });
   }
 });
-
 
 // ➕ Editar empleado (nombre, email, rol o contraseña)
 router.put("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
@@ -83,10 +80,11 @@ router.put("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
     let password_hash = existe.rows[0].password_hash;
     if (password) password_hash = await bcrypt.hash(password, 10);
 
+    // ✅ CORREGIDO: 6 placeholders para 6 campos + 2 condiciones
     await pool.query(
       `UPDATE usuarios SET nombre = $1, email = $2, password_hash = $3, rol = $4, direccion = $5, telefono = $6 
        WHERE id_usuario = $7 AND id_admin = $8`,
-      [nombre, email, password_hash, rol,direccion, telefono, id_usuario, id_admin]
+      [nombre, email, password_hash, rol, direccion, telefono, id_usuario, id_admin]
     );
 
     res.json({ mensaje: "Empleado actualizado correctamente" });
@@ -117,8 +115,6 @@ router.delete("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
   }
 });
 
-
-
 /**
  * 📋 Listar empleados (cajeros y vendedores) del negocio del admin
  */
@@ -136,6 +132,5 @@ router.get("/", authMiddleware(["admin"]), async (req, res) => {
     res.status(500).json({ error: "Error al listar empleados" });
   }
 });
-
 
 module.exports = router;
