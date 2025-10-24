@@ -12,7 +12,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
   const id_admin = req.user.id_admin;
 
   // Solo se permiten roles de empleados
-  const rolesPermitidos = ["cajero", "vendedor"];
+  const rolesPermitidos = ["cajero"];
   if (!rolesPermitidos.includes(rol)) {
     return res.status(403).json({ error: "Rol no permitido" });
   }

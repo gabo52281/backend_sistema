@@ -60,13 +60,15 @@ const adminRoutes = require("./routes/admins");
 const productosRoutes = require("./routes/productos");
 const facturasRoutes = require("./routes/facturas");
 const clientesRoutes = require("./routes/clientes");
-
+const notasRoutes = require("./routes/notas");
 
 const app = express();
 
 // Middlewares
 app.use(cors());
 app.use(express.json());
+
+
 
 // Rutas
 app.use("/api/auth", authRoutes);
@@ -75,7 +77,7 @@ app.use("/api/admins", adminRoutes);
 app.use("/api/productos", productosRoutes);
 app.use("/api/facturas", facturasRoutes);
 app.use("/api/clientes", clientesRoutes);
-
+app.use("/api/notas", notasRoutes);
 
 // Servidor
 app.listen(4000, () => {
@@ -596,7 +598,7 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
 
 
 // 📋 Listar todas las facturas
-router.get("/", authMiddleware(["admin", "superadmin", "cajero", "vendedor"]), async (req, res) => {
+router.get("/", authMiddleware(["admin", "cajero"]), async (req, res) => {
   const { id_admin, rol, id_usuario } = req.user;
 
   try {
@@ -633,6 +635,47 @@ router.get("/", authMiddleware(["admin", "superadmin", "cajero", "vendedor"]), a
     res.status(500).json({ error: "Error al listar facturas" });
   }
 });
+
+
+// 📊 Reporte de ventas por fecha (solo admin o superadmin)
+router.get("/reporte", authMiddleware(["admin"]), async (req, res) => {
+  const { id_admin } = req.user;
+  const { inicio, fin } = req.query;
+
+  if (!inicio || !fin) {
+    return res.status(400).json({ error: "Debes enviar inicio y fin (YYYY-MM-DD)" });
+  }
+
+  try {
+    const ventas = await pool.query(
+      `SELECT f.id_factura, f.fecha, f.total, f.ganancia,
+              COALESCE(c.nombre, 'Sin cliente') AS cliente,
+              u.nombre AS vendedor
+       FROM facturas f
+       LEFT JOIN clientes c ON f.id_cliente = c.id_cliente
+       LEFT JOIN usuarios u ON f.id_usuario = u.id_usuario
+       WHERE f.id_admin = $1 AND DATE(f.fecha) BETWEEN $2 AND $3
+       ORDER BY f.fecha ASC`,
+      [id_admin, inicio, fin]
+    );
+
+    const totalVentas = ventas.rows.reduce((sum, v) => sum + Number(v.total), 0);
+    const totalGanancia = ventas.rows.reduce((sum, v) => sum + Number(v.ganancia), 0);
+
+    res.json({
+      inicio,
+      fin,
+      cantidad_facturas: ventas.rowCount,
+      total_ventas: totalVentas,
+      total_ganancia: totalGanancia,
+      detalle: ventas.rows,
+    });
+  } catch (error) {
+    console.error("❌ Error al generar reporte:", error);
+    res.status(500).json({ error: "Error interno al generar reporte" });
+  }
+});
+
 
 
 
@@ -694,7 +737,7 @@ router.get("/:id_factura", authMiddleware(["admin", "cajero"]), async (req, res)
 
 
 // 🗑️ Eliminar factura (admin o superadmin)
-router.delete("/:id_factura", authMiddleware(["admin", "superadmin"]), async (req, res) => {
+router.delete("/:id_factura", authMiddleware(["admin"]), async (req, res) => {
   const { id_factura } = req.params;
   const { id_admin, rol } = req.user;
 
@@ -748,47 +791,54 @@ router.delete("/:id_factura", authMiddleware(["admin", "superadmin"]), async (re
 });
 
 
-// 📊 Reporte de ventas por fecha (solo admin o superadmin)
-router.get("/reporte", authMiddleware(["admin"]), async (req, res) => {
-  const { id_admin } = req.user;
-  const { inicio, fin } = req.query;
 
-  if (!inicio || !fin) {
-    return res.status(400).json({ error: "Debes enviar inicio y fin (YYYY-MM-DD)" });
-  }
+module.exports = router;
 
+
+// ===== src\routes\notas.js =====
+
+const express = require("express");
+const pool = require("../config/db");
+const router = express.Router();
+
+// ✅ Obtener la nota más reciente
+router.get("/", async (req, res) => {
   try {
-    const ventas = await pool.query(
-      `SELECT f.id_factura, f.fecha, f.total, f.ganancia,
-              COALESCE(c.nombre, 'Sin cliente') AS cliente,
-              u.nombre AS vendedor
-       FROM facturas f
-       LEFT JOIN clientes c ON f.id_cliente = c.id_cliente
-       LEFT JOIN usuarios u ON f.id_usuario = u.id_usuario
-       WHERE f.id_admin = $1 AND DATE(f.fecha) BETWEEN $2 AND $3
-       ORDER BY f.fecha ASC`,
-      [id_admin, inicio, fin]
+    const result = await pool.query(
+      "SELECT id, contenido FROM notas_prueba ORDER BY actualizado_en DESC LIMIT 1"
     );
-
-    const totalVentas = ventas.rows.reduce((sum, v) => sum + Number(v.total), 0);
-    const totalGanancia = ventas.rows.reduce((sum, v) => sum + Number(v.ganancia), 0);
-
-    res.json({
-      inicio,
-      fin,
-      cantidad_facturas: ventas.rowCount,
-      total_ventas: totalVentas,
-      total_ganancia: totalGanancia,
-      detalle: ventas.rows,
-    });
+    res.json(result.rows[0] || { id: null, contenido: "" });
   } catch (error) {
-    console.error("❌ Error al generar reporte:", error);
-    res.status(500).json({ error: "Error interno al generar reporte" });
+    console.error("❌ Error al obtener notas:", error);
+    res.status(500).json({ error: "No se pudieron obtener las notas" });
   }
 });
 
+// ✅ Actualizar o crear nota (público, sin autenticación)
+router.post("/", async (req, res) => {
+  const { contenido } = req.body;
 
+  if (!contenido) {
+    return res.status(400).json({ error: "Contenido requerido" });
+  }
 
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO notas_prueba (contenido)
+      VALUES ($1)
+      ON CONFLICT (id) DO UPDATE SET contenido = $1, actualizado_en = NOW()
+      RETURNING id, contenido
+    `,
+      [contenido]
+    );
+
+    res.json({ mensaje: "Nota guardada ✅", data: result.rows[0] });
+  } catch (error) {
+    console.error("❌ Error al guardar nota:", error);
+    res.status(500).json({ error: "No se pudo guardar la nota" });
+  }
+});
 
 module.exports = router;
 
@@ -833,7 +883,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
 /**
  * 🔹 Listar productos (admin, cajero o vendedor)
  */
-router.get("/", authMiddleware(["admin", "cajero", "vendedor"]), async (req, res) => {
+router.get("/", authMiddleware(["admin", "cajero"]), async (req, res) => {
   const id_admin = req.user.id_admin;
 
   try {
@@ -954,7 +1004,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
   const id_admin = req.user.id_admin;
 
   // Solo se permiten roles de empleados
-  const rolesPermitidos = ["cajero", "vendedor"];
+  const rolesPermitidos = ["cajero"];
   if (!rolesPermitidos.includes(rol)) {
     return res.status(403).json({ error: "Rol no permitido" });
   }

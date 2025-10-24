@@ -121,7 +121,7 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
 
 
 // 📋 Listar todas las facturas
-router.get("/", authMiddleware(["admin", "superadmin", "cajero", "vendedor"]), async (req, res) => {
+router.get("/", authMiddleware(["admin", "cajero"]), async (req, res) => {
   const { id_admin, rol, id_usuario } = req.user;
 
   try {
@@ -260,7 +260,7 @@ router.get("/:id_factura", authMiddleware(["admin", "cajero"]), async (req, res)
 
 
 // 🗑️ Eliminar factura (admin o superadmin)
-router.delete("/:id_factura", authMiddleware(["admin", "superadmin"]), async (req, res) => {
+router.delete("/:id_factura", authMiddleware(["admin"]), async (req, res) => {
   const { id_factura } = req.params;
   const { id_admin, rol } = req.user;
 

@@ -36,7 +36,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
 /**
  * 🔹 Listar productos (admin, cajero o vendedor)
  */
-router.get("/", authMiddleware(["admin", "cajero", "vendedor"]), async (req, res) => {
+router.get("/", authMiddleware(["admin", "cajero"]), async (req, res) => {
   const id_admin = req.user.id_admin;
 
   try {

@@ -60,12 +60,15 @@ router.post("/login", async (req, res) => {
     }
 
     res.json({
-      token,
-      rol: user.rol,
-      id_usuario: user.id_usuario,
-      id_admin: user.id_admin,
-      nombre: user.nombre,
-      nombre_negocio
+       token,
+        rol: user.rol,
+        id_usuario: user.id_usuario,
+        id_admin: user.id_admin,
+        nombre: user.nombre,
+        nombre_negocio,
+        correo: user.email,
+        telefono: user.telefono,    // ✅ Agregar
+        direccion: user.direccion 
     });
     
   } catch (error) {
