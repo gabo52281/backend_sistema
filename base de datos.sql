@@ -10,6 +10,8 @@ CREATE TABLE usuarios (
     id_usuario SERIAL PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL,
     email VARCHAR(100) UNIQUE NOT NULL,
+    direccion TEXT,
+    telefono VARCHAR(20),
     password_hash TEXT NOT NULL, -- se guarda con bcrypt/argon2
     rol VARCHAR(20) NOT NULL CHECK (rol IN ('superadmin','admin','cajero','vendedor')),
     id_admin INT REFERENCES administradores(id_admin) ON DELETE CASCADE,

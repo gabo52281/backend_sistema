@@ -8,7 +8,7 @@ const router = express.Router();
 
 // 🟢 Crear cajero o vendedor (solo para admin)
 router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
-  const { nombre, email, password, rol } = req.body;
+  const { nombre, email, password, rol, direccion, telefono} = req.body;
   const id_admin = req.user.id_admin;
 
   // Solo se permiten roles de empleados
@@ -17,7 +17,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
     return res.status(403).json({ error: "Rol no permitido" });
   }
 
-   if (!nombre || !email || !password || !rol) {
+   if (!nombre || !email || !password || !rol || !direccion || !telefono) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
   try {
@@ -32,8 +32,8 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
    
 
     await pool.query(
-      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin) VALUES ($1, $2, $3, $4, $5)",
-      [nombre, email, password_hash, rol, id_admin]
+      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5)",
+      [nombre, email, password_hash, rol, id_admin, direccion, telefono]
     );
 
     res.status(201).json({ mensaje: "Empleado creado correctamente" });
@@ -43,10 +43,29 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
   }
 });
 
+// ✅ Editar perfil del usuario logueado
+router.put("/perfil", authMiddleware(["admin", "superadmin", "cajero", "vendedor"]), async (req, res) => {
+  const { id_usuario } = req.user; // viene del token
+  const { nombre, telefono, direccion } = req.body;
+
+  try {
+    await pool.query(
+      "UPDATE usuarios SET nombre = $1, telefono = $2, direccion = $3 WHERE id_usuario = $4",
+      [nombre, telefono || null, direccion || null, id_usuario]
+    );
+
+    res.json({ mensaje: "Perfil actualizado correctamente" });
+  } catch (error) {
+    console.error("❌ Error al actualizar perfil:", error);
+    res.status(500).json({ error: "Error al actualizar perfil" });
+  }
+});
+
+
 // ➕ Editar empleado (nombre, email, rol o contraseña)
 router.put("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
   const { id_usuario } = req.params;
-  const { nombre, email, password, rol } = req.body;
+  const { nombre, email, password, rol, direccion, telefono } = req.body;
   const id_admin = req.user.id_admin;
 
   try {
@@ -64,9 +83,9 @@ router.put("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
     if (password) password_hash = await bcrypt.hash(password, 10);
 
     await pool.query(
-      `UPDATE usuarios SET nombre = $1, email = $2, password_hash = $3, rol = $4 
-       WHERE id_usuario = $5 AND id_admin = $6`,
-      [nombre, email, password_hash, rol, id_usuario, id_admin]
+      `UPDATE usuarios SET nombre = $1, email = $2, password_hash = $3, rol = $4, direccion = $5, telefono = $6 
+       WHERE id_usuario = $7 AND id_admin = $8`,
+      [nombre, email, password_hash, rol,direccion, telefono, id_usuario, id_admin]
     );
 
     res.json({ mensaje: "Empleado actualizado correctamente" });

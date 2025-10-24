@@ -12,10 +12,10 @@ const router = express.Router();
  * - Luego crea el usuario "admin" vinculado a ese negocio
  */
 router.post("/crear", authMiddleware(["superadmin"]), async (req, res) => {
-  const { nombre_negocio, email_contacto, nombre_admin, email_admin, password_admin } = req.body;
+  const { nombre_negocio, email_contacto, nombre_admin, email_admin, password_admin,direccion_admin, telefono_admin } = req.body;
 
   // Validar campos obligatorios
-  if (!nombre_negocio || !email_contacto || !nombre_admin || !email_admin || !password_admin) {
+  if (!nombre_negocio || !email_contacto || !nombre_admin || !email_admin || !password_admin ||!direccion_admin || !telefono_admin) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
 
@@ -50,8 +50,8 @@ router.post("/crear", authMiddleware(["superadmin"]), async (req, res) => {
 
     // 5️⃣ Insertar el usuario administrador vinculado al negocio
     await pool.query(
-      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin) VALUES ($1, $2, $3, $4, $5)",
-      [nombre_admin, email_admin, password_hash, "admin", id_admin]
+      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+      [nombre_admin, email_admin, password_hash, "admin", id_admin, direccion_admin, telefono_admin]
     );
 
     res.status(201).json({

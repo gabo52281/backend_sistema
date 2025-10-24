@@ -174,10 +174,10 @@ const router = express.Router();
  * - Luego crea el usuario "admin" vinculado a ese negocio
  */
 router.post("/crear", authMiddleware(["superadmin"]), async (req, res) => {
-  const { nombre_negocio, email_contacto, nombre_admin, email_admin, password_admin } = req.body;
+  const { nombre_negocio, email_contacto, nombre_admin, email_admin, password_admin,direccion_admin, telefono_admin } = req.body;
 
   // Validar campos obligatorios
-  if (!nombre_negocio || !email_contacto || !nombre_admin || !email_admin || !password_admin) {
+  if (!nombre_negocio || !email_contacto || !nombre_admin || !email_admin || !password_admin ||!direccion_admin || !telefono_admin) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
 
@@ -212,8 +212,8 @@ router.post("/crear", authMiddleware(["superadmin"]), async (req, res) => {
 
     // 5️⃣ Insertar el usuario administrador vinculado al negocio
     await pool.query(
-      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin) VALUES ($1, $2, $3, $4, $5)",
-      [nombre_admin, email_admin, password_hash, "admin", id_admin]
+      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+      [nombre_admin, email_admin, password_hash, "admin", id_admin, direccion_admin, telefono_admin]
     );
 
     res.status(201).json({
@@ -321,12 +321,15 @@ router.post("/login", async (req, res) => {
     }
 
     res.json({
-      token,
-      rol: user.rol,
-      id_usuario: user.id_usuario,
-      id_admin: user.id_admin,
-      nombre: user.nombre,
-      nombre_negocio
+       token,
+        rol: user.rol,
+        id_usuario: user.id_usuario,
+        id_admin: user.id_admin,
+        nombre: user.nombre,
+        nombre_negocio,
+        correo: user.email,
+        telefono: user.telefono,    // ✅ Agregar
+        direccion: user.direccion 
     });
     
   } catch (error) {
@@ -1000,7 +1003,7 @@ const router = express.Router();
 
 // 🟢 Crear cajero o vendedor (solo para admin)
 router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
-  const { nombre, email, password, rol } = req.body;
+  const { nombre, email, password, rol, direccion, telefono} = req.body;
   const id_admin = req.user.id_admin;
 
   // Solo se permiten roles de empleados
@@ -1009,7 +1012,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
     return res.status(403).json({ error: "Rol no permitido" });
   }
 
-   if (!nombre || !email || !password || !rol) {
+   if (!nombre || !email || !password || !rol || !direccion || !telefono) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
   try {
@@ -1024,8 +1027,8 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
    
 
     await pool.query(
-      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin) VALUES ($1, $2, $3, $4, $5)",
-      [nombre, email, password_hash, rol, id_admin]
+      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5)",
+      [nombre, email, password_hash, rol, id_admin, direccion, telefono]
     );
 
     res.status(201).json({ mensaje: "Empleado creado correctamente" });
@@ -1038,7 +1041,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
 // ➕ Editar empleado (nombre, email, rol o contraseña)
 router.put("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
   const { id_usuario } = req.params;
-  const { nombre, email, password, rol } = req.body;
+  const { nombre, email, password, rol, direccion, telefono } = req.body;
   const id_admin = req.user.id_admin;
 
   try {
@@ -1056,9 +1059,9 @@ router.put("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
     if (password) password_hash = await bcrypt.hash(password, 10);
 
     await pool.query(
-      `UPDATE usuarios SET nombre = $1, email = $2, password_hash = $3, rol = $4 
-       WHERE id_usuario = $5 AND id_admin = $6`,
-      [nombre, email, password_hash, rol, id_usuario, id_admin]
+      `UPDATE usuarios SET nombre = $1, email = $2, password_hash = $3, rol = $4, direccion = $5, telefono = $6 
+       WHERE id_usuario = $7 AND id_admin = $8`,
+      [nombre, email, password_hash, rol,direccion, telefono, id_usuario, id_admin]
     );
 
     res.json({ mensaje: "Empleado actualizado correctamente" });
