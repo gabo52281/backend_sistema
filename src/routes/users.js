@@ -8,20 +8,17 @@ const router = express.Router();
 
 // 🟢 Crear cajero o vendedor (solo para admin)
 router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
-  const { nombre, email, password, rol, direccion, telefono } = req.body;
+  let { nombre, email, password, rol, direccion, telefono } = req.body;
   const id_admin = req.user.id_admin;
-
-  // Solo se permiten roles de empleados
-  const rolesPermitidos = ["cajero"];
-  if (!rolesPermitidos.includes(rol)) {
-    return res.status(403).json({ error: "Rol no permitido" });
-  }
 
   if (!nombre || !email || !password || !rol || !direccion || !telefono) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
 
   try {
+    // ✅ Normalizar email
+    email = email.toLowerCase().trim();
+
     const existe = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
     if (existe.rows.length > 0) {
       return res.status(409).json({ error: "El email ya está registrado" });
@@ -29,7 +26,6 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
 
     const password_hash = await bcrypt.hash(password, 10);
 
-    // ✅ CORREGIDO: 7 columnas y 7 placeholders
     await pool.query(
       "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5, $6, $7)",
       [nombre, email, password_hash, rol, id_admin, direccion, telefono]
@@ -41,6 +37,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
     res.status(500).json({ error: "Error al crear empleado" });
   }
 });
+
 
 // ✅ Editar perfil del usuario logueado
 router.put("/perfil", authMiddleware(["admin", "superadmin", "cajero"]), async (req, res) => {

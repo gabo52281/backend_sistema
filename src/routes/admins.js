@@ -12,18 +12,21 @@ const router = express.Router();
  * - Luego crea el usuario "admin" vinculado a ese negocio
  */
 router.post("/crear", authMiddleware(["superadmin"]), async (req, res) => {
-  const { nombre_negocio, email_contacto, nombre_admin, email_admin, password_admin,direccion_admin, telefono_admin } = req.body;
+  const { nombre_negocio, email_contacto, nombre_admin, email_admin, password_admin, direccion_admin, telefono_admin } = req.body;
 
-  // Validar campos obligatorios
-  if (!nombre_negocio || !email_contacto || !nombre_admin || !email_admin || !password_admin ||!direccion_admin || !telefono_admin) {
+  if (!nombre_negocio || !email_contacto || !nombre_admin || !email_admin || !password_admin || !direccion_admin || !telefono_admin) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
 
   try {
+    // ✅ Normalizar emails
+    const emailContactoNormalizado = email_contacto.toLowerCase().trim();
+    const emailAdminNormalizado = email_admin.toLowerCase().trim();
+
     // 1️⃣ Verificar si el negocio ya existe
     const negocioExistente = await pool.query(
       "SELECT * FROM administradores WHERE email_contacto = $1",
-      [email_contacto]
+      [emailContactoNormalizado]
     );
     if (negocioExistente.rows.length > 0) {
       return res.status(409).json({ error: "Ya existe un negocio con ese email de contacto" });
@@ -32,45 +35,35 @@ router.post("/crear", authMiddleware(["superadmin"]), async (req, res) => {
     // 2️⃣ Crear el nuevo negocio
     const nuevoNegocio = await pool.query(
       "INSERT INTO administradores (nombre_negocio, email_contacto) VALUES ($1, $2) RETURNING id_admin",
-      [nombre_negocio, email_contacto]
+      [nombre_negocio, emailContactoNormalizado]
     );
     const id_admin = nuevoNegocio.rows[0].id_admin;
 
     // 3️⃣ Verificar si el email del admin ya existe
     const adminExistente = await pool.query(
       "SELECT * FROM usuarios WHERE email = $1",
-      [email_admin]
+      [emailAdminNormalizado]
     );
     if (adminExistente.rows.length > 0) {
       return res.status(409).json({ error: "El email del administrador ya está en uso" });
     }
 
-    // 4️⃣ Crear hash seguro de la contraseña
+    // 4️⃣ Hash de contraseña
     const password_hash = await bcrypt.hash(password_admin, 10);
 
-    // 5️⃣ Insertar el usuario administrador vinculado al negocio
+    // 5️⃣ Crear usuario admin
     await pool.query(
       "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-      [nombre_admin, email_admin, password_hash, "admin", id_admin, direccion_admin, telefono_admin]
+      [nombre_admin, emailAdminNormalizado, password_hash, "admin", id_admin, direccion_admin, telefono_admin]
     );
 
-    res.status(201).json({
-      mensaje: "Negocio y administrador creados correctamente",
-      negocio: {
-        id_admin,
-        nombre_negocio,
-        email_contacto,
-      },
-      administrador: {
-        nombre: nombre_admin,
-        email: email_admin,
-      },
-    });
+    res.status(201).json({ mensaje: "Negocio y administrador creados correctamente" });
   } catch (error) {
     console.error("❌ Error al crear negocio y administrador:", error);
     res.status(500).json({ error: "Error interno del servidor" });
   }
 });
+
 
 /**
  * 📋 Listar todos los administradores y negocios
