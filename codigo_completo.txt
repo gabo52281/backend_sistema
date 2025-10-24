@@ -1038,6 +1038,25 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
   }
 });
 
+// ✅ Editar perfil del usuario logueado
+router.put("/perfil", authMiddleware(["admin", "superadmin", "cajero"]), async (req, res) => {
+  const { id_usuario } = req.user; // viene del token
+  const { nombre, telefono, direccion } = req.body;
+
+  try {
+    await pool.query(
+      "UPDATE usuarios SET nombre = $1, telefono = $2, direccion = $3 WHERE id_usuario = $4",
+      [nombre, telefono || null, direccion || null, id_usuario]
+    );
+
+    res.json({ mensaje: "Perfil actualizado correctamente" });
+  } catch (error) {
+    console.error("❌ Error al actualizar perfil:", error);
+    res.status(500).json({ error: "Error al actualizar perfil" });
+  }
+});
+
+
 // ➕ Editar empleado (nombre, email, rol o contraseña)
 router.put("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
   const { id_usuario } = req.params;

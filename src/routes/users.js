@@ -32,7 +32,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
    
 
     await pool.query(
-      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5)",
+      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5, $6, $7)",
       [nombre, email, password_hash, rol, id_admin, direccion, telefono]
     );
 
@@ -44,14 +44,15 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
 });
 
 // ✅ Editar perfil del usuario logueado
-router.put("/perfil", authMiddleware(["admin", "superadmin", "cajero", "vendedor"]), async (req, res) => {
+router.put("/perfil", authMiddleware(["admin", "superadmin", "cajero"]), async (req, res) => {
   const { id_usuario } = req.user; // viene del token
   const { nombre, telefono, direccion } = req.body;
 
+  
   try {
     await pool.query(
       "UPDATE usuarios SET nombre = $1, telefono = $2, direccion = $3 WHERE id_usuario = $4",
-      [nombre, telefono || null, direccion || null, id_usuario]
+      [nombre, telefono || null, direccion || null, id_usuario]  // ✅ Esto está bien
     );
 
     res.json({ mensaje: "Perfil actualizado correctamente" });
