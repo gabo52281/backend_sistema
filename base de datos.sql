@@ -40,7 +40,7 @@ CREATE TABLE productos (
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CCREATE TABLE facturas ( 
+CREATE TABLE facturas ( 
     id_factura SERIAL PRIMARY KEY,
     id_cliente INT REFERENCES clientes(id_cliente) ON DELETE SET NULL,
     id_usuario INT REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
