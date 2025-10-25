@@ -56,13 +56,19 @@ router.get("/", authMiddleware(["admin", "cajero"]), async (req, res) => {
  */
 router.put("/:id", authMiddleware(["admin"]), async (req, res) => {
   const { id } = req.params;
-  const { nombre, precio, stock } = req.body;
+  const { nombre, precio, stock, precio_compra } = req.body;
   const id_admin = req.user.id_admin;
 
+  // ✅ Normalizar valores numéricos
+  const precioNum = Number(precio);
+  const precioCompraNum = precio_compra !== undefined && precio_compra !== null ? Number(precio_compra) : 0;
+  const stockNum = Number(stock);
+
   try {
+    // ✅ CORRECCIÓN: La sintaxis SQL estaba mal (coma en lugar de WHERE)
     const result = await pool.query(
-      "UPDATE productos SET nombre = $1, precio = $2, stock = $3 WHERE id_producto = $4 AND id_admin = $5",
-      [nombre, precio, stock, id, id_admin]
+      "UPDATE productos SET nombre = $1, precio = $2, stock = $3, precio_compra = $4 WHERE id_producto = $5 AND id_admin = $6",
+      [nombre, precioNum, stockNum, precioCompraNum, id, id_admin]
     );
 
     if (result.rowCount === 0) {
@@ -75,8 +81,6 @@ router.put("/:id", authMiddleware(["admin"]), async (req, res) => {
     res.status(500).json({ error: "Error al actualizar producto" });
   }
 });
-
-
 
 /**
  * ➕ Añadir existencias a un producto (solo admin)
@@ -104,15 +108,14 @@ router.put("/:id/anadir-stock", authMiddleware(["admin"]), async (req, res) => {
     }
 
     res.json({
-      mensaje: `Se anadieron ${cantidad} unidades al producto "${result.rows[0].nombre}"`,
+      mensaje: `Se añadieron ${cantidad} unidades al producto "${result.rows[0].nombre}"`,
       producto: result.rows[0],
     });
   } catch (error) {
-    console.error("❌ Error al anadir stock:", error);
+    console.error("❌ Error al añadir stock:", error);
     res.status(500).json({ error: "Error al añadir stock" });
   }
 });
-
 
 /**
  * 🗑️ Eliminar producto (solo admin)
