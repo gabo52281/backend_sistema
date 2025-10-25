@@ -11,7 +11,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
   let { nombre, email, password, rol, direccion, telefono } = req.body;
   const id_admin = req.user.id_admin;
 
-  if (!nombre || !email || !password || !rol || !direccion || !telefono) {
+  if (!nombre || !email || !password || !rol ) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
 
@@ -28,7 +28,7 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
 
     await pool.query(
       "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-      [nombre, email, password_hash, rol, id_admin, direccion, telefono]
+      [nombre, email, password_hash, rol, id_admin, direccion || null , telefono || null]
     );
 
     res.status(201).json({ mensaje: "Empleado creado correctamente" });
