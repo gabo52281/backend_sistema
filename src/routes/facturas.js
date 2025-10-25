@@ -21,7 +21,7 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
     await client.query("BEGIN");
 
     let total = 0;
-    let ganancia_total = 0; // 🆕 nueva variable
+    let ganancia_total = 0;
 
     // 🔹 Validar, actualizar stock y calcular ganancia
     for (const item of productos) {
@@ -43,12 +43,18 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
       }
 
       const { precio, precio_compra, stock } = prodRes.rows[0];
+      
+      // ✅ Convertir a números para evitar problemas
+      const precioVenta = Number(precio);
+      const precioCompra = Number(precio_compra);
+      
       if (stock < cantidad) {
         throw new Error(`Stock insuficiente para el producto ${id_producto}`);
       }
 
-      total += precio * cantidad;
-      ganancia_total += (precio - precio_compra) * cantidad; // 🆕 calcular ganancia
+      total += precioVenta * cantidad;
+      // ✅ CORRECCIÓN: Ganancia = (Precio Venta - Precio Compra) × Cantidad
+      ganancia_total += (precioVenta - precioCompra) * cantidad;
 
       // Actualizar stock
       await client.query(
@@ -182,8 +188,9 @@ router.get("/reporte", authMiddleware(["admin"]), async (req, res) => {
       [id_admin, inicio, fin]
     );
 
-    const totalVentas = ventas.rows.reduce((sum, v) => sum + Number(v.total), 0);
-    const totalGanancia = ventas.rows.reduce((sum, v) => sum + Number(v.ganancia), 0);
+    // ✅ Convertir a números antes de sumar
+    const totalVentas = ventas.rows.reduce((sum, v) => sum + Number(v.total || 0), 0);
+    const totalGanancia = ventas.rows.reduce((sum, v) => sum + Number(v.ganancia || 0), 0);
 
     res.json({
       inicio,
