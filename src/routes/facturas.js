@@ -11,6 +11,7 @@ const router = express.Router();
 router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
   const { productos, id_cliente } = req.body; // productos: [{ id_producto, cantidad }]
   const { id_usuario, id_admin } = req.user;
+  
   // validate payload
   if (!Array.isArray(productos) || productos.length === 0) {
     return res.status(400).json({ error: "La factura debe contener al menos un producto" });
@@ -26,9 +27,9 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
     // 🔹 Validar, actualizar stock y calcular ganancia
     for (const item of productos) {
       const id_producto = Number(item.id_producto);
-      const cantidad = Number(item.cantidad);
+      const cantidadVendida = Number(item.cantidad); // ✅ Esta es la cantidad VENDIDA, no el stock
 
-      if (!Number.isFinite(id_producto) || !Number.isFinite(cantidad) || cantidad <= 0) {
+      if (!Number.isFinite(id_producto) || !Number.isFinite(cantidadVendida) || cantidadVendida <= 0) {
         throw new Error(`Producto inválido o cantidad no válida (id: ${item.id_producto})`);
       }
 
@@ -48,13 +49,23 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
       const precioVenta = Number(precio);
       const precioCompra = Number(precio_compra);
       
-      if (stock < cantidad) {
+      if (stock < cantidadVendida) {
         throw new Error(`Stock insuficiente para el producto ${id_producto}`);
       }
 
-      total += precioVenta * cantidad;
-      // ✅ CORRECCIÓN: Ganancia = (Precio Venta - Precio Compra) × Cantidad
-      ganancia_total += (precioVenta - precioCompra) * cantidad;
+      // ✅ CALCULAR TOTAL Y GANANCIA SOLO DE LO VENDIDO
+      const subtotal = precioVenta * cantidadVendida;
+      const gananciaProducto = (precioVenta - precioCompra) * cantidadVendida;
+      
+      total += subtotal;
+      ganancia_total += gananciaProducto;
+
+      console.log(`📦 Producto ${id_producto}:
+        - Cantidad vendida: ${cantidadVendida}
+        - Precio venta: ${precioVenta}
+        - Precio compra: ${precioCompra}
+        - Subtotal: ${subtotal}
+        - Ganancia: ${gananciaProducto}`);
 
       // Actualizar stock
       await client.query(
@@ -63,9 +74,13 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
          WHERE id_producto = $2
            AND id_admin = $3
            AND stock >= $1`,
-        [cantidad, id_producto, id_admin]
+        [cantidadVendida, id_producto, id_admin]
       );
     }
+
+    console.log(`💰 RESUMEN FACTURA:
+      - Total: ${total}
+      - Ganancia total: ${ganancia_total}`);
 
     // 🔹 Crear la factura con la ganancia incluida y devolver fecha
     const facturaResult = await client.query(
@@ -207,12 +222,8 @@ router.get("/reporte", authMiddleware(["admin"]), async (req, res) => {
 });
 
 
-
-
-
 /**
- * 📋 Listar facturas del negocio
- * Solo el admin puede verlas
+ * 📋 Obtener detalle de una factura específica
  */
 router.get("/:id_factura", authMiddleware(["admin", "cajero"]), async (req, res) => {
   const { id_factura } = req.params;
@@ -292,7 +303,6 @@ router.delete("/:id_factura", authMiddleware(["admin"]), async (req, res) => {
     }
 
     // Restaurar stock: obtener detalles y sumar las cantidades
-    // Obtener id_admin de la factura (si no se obtuvo antes)
     let facturaAdminId = id_admin;
     if (!facturaAdminId) {
       const fAll = await client.query('SELECT id_admin FROM facturas WHERE id_factura = $1', [id_factura]);
@@ -319,7 +329,5 @@ router.delete("/:id_factura", authMiddleware(["admin"]), async (req, res) => {
     client.release();
   }
 });
-
-
 
 module.exports = router;
