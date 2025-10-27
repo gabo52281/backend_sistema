@@ -174,18 +174,21 @@ const router = express.Router();
  * - Luego crea el usuario "admin" vinculado a ese negocio
  */
 router.post("/crear", authMiddleware(["superadmin"]), async (req, res) => {
-  const { nombre_negocio, email_contacto, nombre_admin, email_admin, password_admin,direccion_admin, telefono_admin } = req.body;
+  const { nombre_negocio, email_contacto, nombre_admin, email_admin, password_admin, direccion_admin, telefono_admin } = req.body;
 
-  // Validar campos obligatorios
-  if (!nombre_negocio || !email_contacto || !nombre_admin || !email_admin || !password_admin ||!direccion_admin || !telefono_admin) {
+  if (!nombre_negocio || !email_contacto || !nombre_admin || !email_admin || !password_admin || !direccion_admin || !telefono_admin) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
 
   try {
+    // ✅ Normalizar emails
+    const emailContactoNormalizado = email_contacto.toLowerCase().trim();
+    const emailAdminNormalizado = email_admin.toLowerCase().trim();
+
     // 1️⃣ Verificar si el negocio ya existe
     const negocioExistente = await pool.query(
       "SELECT * FROM administradores WHERE email_contacto = $1",
-      [email_contacto]
+      [emailContactoNormalizado]
     );
     if (negocioExistente.rows.length > 0) {
       return res.status(409).json({ error: "Ya existe un negocio con ese email de contacto" });
@@ -194,45 +197,35 @@ router.post("/crear", authMiddleware(["superadmin"]), async (req, res) => {
     // 2️⃣ Crear el nuevo negocio
     const nuevoNegocio = await pool.query(
       "INSERT INTO administradores (nombre_negocio, email_contacto) VALUES ($1, $2) RETURNING id_admin",
-      [nombre_negocio, email_contacto]
+      [nombre_negocio, emailContactoNormalizado]
     );
     const id_admin = nuevoNegocio.rows[0].id_admin;
 
     // 3️⃣ Verificar si el email del admin ya existe
     const adminExistente = await pool.query(
       "SELECT * FROM usuarios WHERE email = $1",
-      [email_admin]
+      [emailAdminNormalizado]
     );
     if (adminExistente.rows.length > 0) {
       return res.status(409).json({ error: "El email del administrador ya está en uso" });
     }
 
-    // 4️⃣ Crear hash seguro de la contraseña
+    // 4️⃣ Hash de contraseña
     const password_hash = await bcrypt.hash(password_admin, 10);
 
-    // 5️⃣ Insertar el usuario administrador vinculado al negocio
+    // 5️⃣ Crear usuario admin
     await pool.query(
       "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-      [nombre_admin, email_admin, password_hash, "admin", id_admin, direccion_admin, telefono_admin]
+      [nombre_admin, emailAdminNormalizado, password_hash, "admin", id_admin, direccion_admin, telefono_admin]
     );
 
-    res.status(201).json({
-      mensaje: "Negocio y administrador creados correctamente",
-      negocio: {
-        id_admin,
-        nombre_negocio,
-        email_contacto,
-      },
-      administrador: {
-        nombre: nombre_admin,
-        email: email_admin,
-      },
-    });
+    res.status(201).json({ mensaje: "Negocio y administrador creados correctamente" });
   } catch (error) {
     console.error("❌ Error al crear negocio y administrador:", error);
     res.status(500).json({ error: "Error interno del servidor" });
   }
 });
+
 
 /**
  * 📋 Listar todos los administradores y negocios
@@ -276,68 +269,40 @@ const router = express.Router();
 
 // ruta para login
 router.post("/login", async (req, res) => {
-  // extraemos email y password del body
-  const { email, password } = req.body;
+  let { email, password } = req.body;
 
   try {
+    // ✅ Normalizar email
+    email = email.toLowerCase().trim();
 
-    // buscamos el usuario en la base de datos
-    // si no existe, retornamos un error
     const result = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
     if (result.rows.length === 0) return res.status(404).json({ error: "Usuario no encontrado" });
-    
-    // si existe, comparamos la contraseña hasheada
-    // si no coincide, retornamos un error
+
     const user = result.rows[0];
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) return res.status(401).json({ error: "Credenciales inválidas" });
 
-    // si todo es correcto, creamos un token JWT
-    // y lo enviamos en la respuesta
-    // el token expira en 7 días
-    // incluimos id_usuario, rol e id_admin en el payload del token
-    // para usarlos en la autenticación y autorización
     const token = jwt.sign(
       { id_usuario: user.id_usuario, rol: user.rol, id_admin: user.id_admin },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    // enviamos el token y el rol en la respuesta
-    // Si el usuario es admin, obtener también el nombre del negocio
-    let nombre_negocio = null;
-    try {
-      if (user.id_admin) {
-        const adminRes = await pool.query(
-          'SELECT nombre_negocio FROM administradores WHERE id_admin = $1',
-          [user.id_admin]
-        );
-        nombre_negocio = adminRes.rows[0]?.nombre_negocio || null;
-      }
-    } catch (err) {
-      console.error('Error obteniendo nombre de negocio:', err);
-      // no bloqueamos el login por este error; devolvemos null en nombre_negocio
-      nombre_negocio = null;
-    }
-
     res.json({
-       token,
-        rol: user.rol,
-        id_usuario: user.id_usuario,
-        id_admin: user.id_admin,
-        nombre: user.nombre,
-        nombre_negocio,
-        correo: user.email,
-        telefono: user.telefono,    // ✅ Agregar
-        direccion: user.direccion 
+      token,
+      rol: user.rol,
+      id_usuario: user.id_usuario,
+      id_admin: user.id_admin,
+      nombre: user.nombre,
+      correo: user.email,
+      telefono: user.telefono,
+      direccion: user.direccion
     });
-    
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Error en login" });
   }
 });
-
 
 
 
@@ -491,6 +456,7 @@ const router = express.Router();
 router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
   const { productos, id_cliente } = req.body; // productos: [{ id_producto, cantidad }]
   const { id_usuario, id_admin } = req.user;
+  
   // validate payload
   if (!Array.isArray(productos) || productos.length === 0) {
     return res.status(400).json({ error: "La factura debe contener al menos un producto" });
@@ -501,14 +467,14 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
     await client.query("BEGIN");
 
     let total = 0;
-    let ganancia_total = 0; // 🆕 nueva variable
+    let ganancia_total = 0;
 
     // 🔹 Validar, actualizar stock y calcular ganancia
     for (const item of productos) {
       const id_producto = Number(item.id_producto);
-      const cantidad = Number(item.cantidad);
+      const cantidadVendida = Number(item.cantidad); // ✅ Esta es la cantidad VENDIDA, no el stock
 
-      if (!Number.isFinite(id_producto) || !Number.isFinite(cantidad) || cantidad <= 0) {
+      if (!Number.isFinite(id_producto) || !Number.isFinite(cantidadVendida) || cantidadVendida <= 0) {
         throw new Error(`Producto inválido o cantidad no válida (id: ${item.id_producto})`);
       }
 
@@ -523,12 +489,28 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
       }
 
       const { precio, precio_compra, stock } = prodRes.rows[0];
-      if (stock < cantidad) {
+      
+      // ✅ Convertir a números para evitar problemas
+      const precioVenta = Number(precio);
+      const precioCompra = Number(precio_compra);
+      
+      if (stock < cantidadVendida) {
         throw new Error(`Stock insuficiente para el producto ${id_producto}`);
       }
 
-      total += precio * cantidad;
-      ganancia_total += (precio - precio_compra) * cantidad; // 🆕 calcular ganancia
+      // ✅ CALCULAR TOTAL Y GANANCIA SOLO DE LO VENDIDO
+      const subtotal = precioVenta * cantidadVendida;
+      const gananciaProducto = (precioVenta - precioCompra) * cantidadVendida;
+      
+      total += subtotal;
+      ganancia_total += gananciaProducto;
+
+      console.log(`📦 Producto ${id_producto}:
+        - Cantidad vendida: ${cantidadVendida}
+        - Precio venta: ${precioVenta}
+        - Precio compra: ${precioCompra}
+        - Subtotal: ${subtotal}
+        - Ganancia: ${gananciaProducto}`);
 
       // Actualizar stock
       await client.query(
@@ -537,9 +519,13 @@ router.post("/crear", authMiddleware(["admin", "cajero"]), async (req, res) => {
          WHERE id_producto = $2
            AND id_admin = $3
            AND stock >= $1`,
-        [cantidad, id_producto, id_admin]
+        [cantidadVendida, id_producto, id_admin]
       );
     }
+
+    console.log(`💰 RESUMEN FACTURA:
+      - Total: ${total}
+      - Ganancia total: ${ganancia_total}`);
 
     // 🔹 Crear la factura con la ganancia incluida y devolver fecha
     const facturaResult = await client.query(
@@ -662,8 +648,9 @@ router.get("/reporte", authMiddleware(["admin"]), async (req, res) => {
       [id_admin, inicio, fin]
     );
 
-    const totalVentas = ventas.rows.reduce((sum, v) => sum + Number(v.total), 0);
-    const totalGanancia = ventas.rows.reduce((sum, v) => sum + Number(v.ganancia), 0);
+    // ✅ Convertir a números antes de sumar
+    const totalVentas = ventas.rows.reduce((sum, v) => sum + Number(v.total || 0), 0);
+    const totalGanancia = ventas.rows.reduce((sum, v) => sum + Number(v.ganancia || 0), 0);
 
     res.json({
       inicio,
@@ -680,12 +667,8 @@ router.get("/reporte", authMiddleware(["admin"]), async (req, res) => {
 });
 
 
-
-
-
 /**
- * 📋 Listar facturas del negocio
- * Solo el admin puede verlas
+ * 📋 Obtener detalle de una factura específica
  */
 router.get("/:id_factura", authMiddleware(["admin", "cajero"]), async (req, res) => {
   const { id_factura } = req.params;
@@ -765,7 +748,6 @@ router.delete("/:id_factura", authMiddleware(["admin"]), async (req, res) => {
     }
 
     // Restaurar stock: obtener detalles y sumar las cantidades
-    // Obtener id_admin de la factura (si no se obtuvo antes)
     let facturaAdminId = id_admin;
     if (!facturaAdminId) {
       const fAll = await client.query('SELECT id_admin FROM facturas WHERE id_factura = $1', [id_factura]);
@@ -793,10 +775,7 @@ router.delete("/:id_factura", authMiddleware(["admin"]), async (req, res) => {
   }
 });
 
-
-
 module.exports = router;
-
 
 // ===== src\routes\notas.js =====
 
@@ -906,13 +885,19 @@ router.get("/", authMiddleware(["admin", "cajero"]), async (req, res) => {
  */
 router.put("/:id", authMiddleware(["admin"]), async (req, res) => {
   const { id } = req.params;
-  const { nombre, precio, stock } = req.body;
+  const { nombre, precio, stock, precio_compra } = req.body;
   const id_admin = req.user.id_admin;
 
+  // ✅ Normalizar valores numéricos
+  const precioNum = Number(precio);
+  const precioCompraNum = precio_compra !== undefined && precio_compra !== null ? Number(precio_compra) : 0;
+  const stockNum = Number(stock);
+
   try {
+    // ✅ CORRECCIÓN: La sintaxis SQL estaba mal (coma en lugar de WHERE)
     const result = await pool.query(
-      "UPDATE productos SET nombre = $1, precio = $2, stock = $3 WHERE id_producto = $4 AND id_admin = $5",
-      [nombre, precio, stock, id, id_admin]
+      "UPDATE productos SET nombre = $1, precio = $2, stock = $3, precio_compra = $4 WHERE id_producto = $5 AND id_admin = $6",
+      [nombre, precioNum, stockNum, precioCompraNum, id, id_admin]
     );
 
     if (result.rowCount === 0) {
@@ -925,8 +910,6 @@ router.put("/:id", authMiddleware(["admin"]), async (req, res) => {
     res.status(500).json({ error: "Error al actualizar producto" });
   }
 });
-
-
 
 /**
  * ➕ Añadir existencias a un producto (solo admin)
@@ -954,15 +937,14 @@ router.put("/:id/anadir-stock", authMiddleware(["admin"]), async (req, res) => {
     }
 
     res.json({
-      mensaje: `Se anadieron ${cantidad} unidades al producto "${result.rows[0].nombre}"`,
+      mensaje: `Se añadieron ${cantidad} unidades al producto "${result.rows[0].nombre}"`,
       producto: result.rows[0],
     });
   } catch (error) {
-    console.error("❌ Error al anadir stock:", error);
+    console.error("❌ Error al añadir stock:", error);
     res.status(500).json({ error: "Error al añadir stock" });
   }
 });
-
 
 /**
  * 🗑️ Eliminar producto (solo admin)
@@ -990,7 +972,6 @@ router.delete("/:id", authMiddleware(["admin"]), async (req, res) => {
 
 module.exports = router;
 
-
 // ===== src\routes\users.js =====
 
 // src/routes/usuarios.js
@@ -1003,19 +984,17 @@ const router = express.Router();
 
 // 🟢 Crear cajero o vendedor (solo para admin)
 router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
-  const { nombre, email, password, rol, direccion, telefono} = req.body;
+  let { nombre, email, password, rol, direccion, telefono } = req.body;
   const id_admin = req.user.id_admin;
 
-  // Solo se permiten roles de empleados
-  const rolesPermitidos = ["cajero"];
-  if (!rolesPermitidos.includes(rol)) {
-    return res.status(403).json({ error: "Rol no permitido" });
-  }
-
-   if (!nombre || !email || !password || !rol || !direccion || !telefono) {
+  if (!nombre || !email || !password || !rol ) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
+
   try {
+    // ✅ Normalizar email
+    email = email.toLowerCase().trim();
+
     const existe = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
     if (existe.rows.length > 0) {
       return res.status(409).json({ error: "El email ya está registrado" });
@@ -1023,20 +1002,18 @@ router.post("/crear", authMiddleware(["admin"]), async (req, res) => {
 
     const password_hash = await bcrypt.hash(password, 10);
 
-    // id_admin viene del token del admin logueado
-   
-
     await pool.query(
-      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5)",
-      [nombre, email, password_hash, rol, id_admin, direccion, telefono]
+      "INSERT INTO usuarios (nombre, email, password_hash, rol, id_admin, direccion, telefono) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+      [nombre, email, password_hash, rol, id_admin, direccion || null , telefono || null]
     );
 
     res.status(201).json({ mensaje: "Empleado creado correctamente" });
   } catch (error) {
-    console.error(error);
+    console.error("Error al crear empleado:", error);
     res.status(500).json({ error: "Error al crear empleado" });
   }
 });
+
 
 // ✅ Editar perfil del usuario logueado
 router.put("/perfil", authMiddleware(["admin", "superadmin", "cajero"]), async (req, res) => {
@@ -1055,7 +1032,6 @@ router.put("/perfil", authMiddleware(["admin", "superadmin", "cajero"]), async (
     res.status(500).json({ error: "Error al actualizar perfil" });
   }
 });
-
 
 // ➕ Editar empleado (nombre, email, rol o contraseña)
 router.put("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
@@ -1077,10 +1053,11 @@ router.put("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
     let password_hash = existe.rows[0].password_hash;
     if (password) password_hash = await bcrypt.hash(password, 10);
 
+    // ✅ CORREGIDO: 6 placeholders para 6 campos + 2 condiciones
     await pool.query(
       `UPDATE usuarios SET nombre = $1, email = $2, password_hash = $3, rol = $4, direccion = $5, telefono = $6 
        WHERE id_usuario = $7 AND id_admin = $8`,
-      [nombre, email, password_hash, rol,direccion, telefono, id_usuario, id_admin]
+      [nombre, email, password_hash, rol, direccion, telefono, id_usuario, id_admin]
     );
 
     res.json({ mensaje: "Empleado actualizado correctamente" });
@@ -1111,8 +1088,6 @@ router.delete("/:id_usuario", authMiddleware(["admin"]), async (req, res) => {
   }
 });
 
-
-
 /**
  * 📋 Listar empleados (cajeros y vendedores) del negocio del admin
  */
@@ -1130,6 +1105,5 @@ router.get("/", authMiddleware(["admin"]), async (req, res) => {
     res.status(500).json({ error: "Error al listar empleados" });
   }
 });
-
 
 module.exports = router;

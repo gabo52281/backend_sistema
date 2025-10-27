@@ -120,7 +120,7 @@ router.get("/", authMiddleware(["admin"]), async (req, res) => {
 
   try {
     const result = await pool.query(
-      "SELECT id_usuario, nombre, email, rol FROM usuarios WHERE id_admin = $1 AND rol IN ('cajero', 'vendedor') ORDER BY id_usuario DESC",
+      "SELECT id_usuario, nombre, email, rol, telefono, direccion FROM usuarios WHERE id_admin = $1 AND rol IN ('cajero') ORDER BY id_usuario DESC",
       [id_admin]
     );
     res.json(result.rows);
